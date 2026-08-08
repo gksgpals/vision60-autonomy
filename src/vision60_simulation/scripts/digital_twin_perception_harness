@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Drive a short route and render camera-LiDAR localization evidence."""
+
+import json
+import math
+from pathlib import Path
+import time
+
+import cv2
+from geometry_msgs.msg import Twist
+import numpy as np
+import rclpy
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Image
+from vision_msgs.msg import Detection3DArray
+from vision60_msgs.msg import MissionEvent
+
+
+GROUND_TRUTH = {
+    'victim_candidate': (2.60, -0.65, 0.85),
+    'hazard_candidate': (4.00, 0.65, 0.45),
+}
+COLORS = {
+    'victim_candidate': (255, 80, 255),
+    'hazard_candidate': (0, 220, 255),
+}
+
+
+class PerceptionHarness(Node):
+    """Collect detections, score their map positions, and make an MP4."""
+
+    def __init__(self):
+        super().__init__('digital_twin_perception_harness')
+        self.declare_parameter('output_dir', '/artifacts')
+        self.output_dir = Path(self.get_parameter('output_dir').value)
+        self.started = time.monotonic()
+        self.odom = None
+        self.positions = []
+        self.latest = {}
+        self.events = set()
+        self.frames = []
+        self.last_frame = 0.0
+        self.finish_after = None
+        self.written = False
+        self.velocity_pub = self.create_publisher(Twist, '/cmd_vel_safe', 10)
+        self.create_subscription(Odometry, '/vision60/odom', self.odom_callback, 20)
+        self.create_subscription(
+            Detection3DArray, '/perception/detections_3d',
+            self.detection_callback, 10,
+        )
+        self.create_subscription(
+            MissionEvent, '/mission/event', self.event_callback, 10
+        )
+        self.create_subscription(
+            Image, '/perception/annotated_image', self.image_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_timer(0.10, self.tick)
+
+    def odom_callback(self, message):
+        self.odom = message
+        self.positions.append((
+            float(message.pose.pose.position.x),
+            float(message.pose.pose.position.y),
+        ))
+
+    def detection_callback(self, message):
+        for detection in message.detections:
+            if not detection.results:
+                continue
+            result = detection.results[0]
+            position = result.pose.pose.position
+            self.latest[result.hypothesis.class_id] = (
+                float(position.x), float(position.y), float(position.z),
+                float(result.hypothesis.score),
+            )
+
+    def event_callback(self, message):
+        if message.event_type in GROUND_TRUTH:
+            self.events.add(message.event_type)
+
+    def image_callback(self, message):
+        now = time.monotonic()
+        if now - self.last_frame < 0.10:
+            return
+        raw = np.frombuffer(message.data, dtype=np.uint8)
+        expected = int(message.height) * int(message.step)
+        if raw.size < expected or message.step < message.width * 3:
+            return
+        frame = raw[:expected].reshape(int(message.height), int(message.step))
+        frame = frame[:, :int(message.width) * 3].reshape(
+            int(message.height), int(message.width), 3
+        ).copy()
+        if message.encoding.lower() == 'rgb8':
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
+        if not ok:
+            return
+        robot = self.positions[-1] if self.positions else (0.0, 0.0)
+        self.frames.append((encoded.tobytes(), robot, dict(self.latest), set(self.events)))
+        self.last_frame = now
+
+    def tick(self):
+        elapsed = time.monotonic() - self.started
+        command = Twist()
+        if self.odom is not None and self.odom.pose.pose.position.x < 1.0 and elapsed < 14.0:
+            command.linear.x = 0.12
+        self.velocity_pub.publish(command)
+        ready = (
+            set(GROUND_TRUTH) <= self.latest.keys()
+            and set(GROUND_TRUTH) <= self.events
+            and len(self.frames) >= 55
+            and self.positions
+            and self.positions[-1][0] >= 0.70
+        )
+        if ready and self.finish_after is None:
+            self.finish_after = time.monotonic() + 2.0
+        if self.finish_after is not None and time.monotonic() >= self.finish_after and not self.written:
+            self.written = True
+            self.write_artifacts(False)
+        elif elapsed >= 24.0 and not self.written:
+            self.written = True
+            self.write_artifacts(True)
+
+    def metrics(self, force_fail):
+        errors = {}
+        valid_z = True
+        for label, truth in GROUND_TRUTH.items():
+            estimate = self.latest.get(label)
+            if estimate is None:
+                errors[label] = None
+                valid_z = False
+                continue
+            errors[label] = round(math.dist(estimate[:3], truth), 4)
+            valid_z = valid_z and -0.1 <= estimate[2] <= 1.8
+        passed = bool(
+            not force_fail
+            and set(GROUND_TRUTH) <= self.latest.keys()
+            and set(GROUND_TRUTH) <= self.events
+            and all(value is not None and value <= 0.60 for value in errors.values())
+            and valid_z
+            and len(self.frames) >= 55
+        )
+        return {
+            'passed': passed,
+            'detector_backend': 'simulation_color (mock only)',
+            'localization': 'Ouster LiDAR points projected into camera boxes',
+            'standard_interfaces': [
+                'vision_msgs/Detection2DArray',
+                'vision_msgs/Detection3DArray',
+                'vision60_msgs/MissionEvent',
+            ],
+            'detected_classes': sorted(self.latest),
+            'mission_events': sorted(self.events),
+            'position_error_m': errors,
+            'latest_positions': {
+                key: [round(value, 4) for value in values[:3]]
+                for key, values in self.latest.items()
+            },
+            'robot_distance_m': round(self.positions[-1][0], 4) if self.positions else 0.0,
+            'video_frames': len(self.frames),
+        }
+
+    def write_artifacts(self, force_fail):
+        self.velocity_pub.publish(Twist())
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        metrics = self.metrics(force_fail)
+        (self.output_dir / 'perception_report.json').write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2), encoding='utf-8'
+        )
+        self.render_video(metrics)
+        marker = 'PASS' if metrics['passed'] else 'FAIL'
+        (self.output_dir / marker).write_text('victim hazard 3D localization\n', encoding='utf-8')
+        self.get_logger().warning(
+            'DIGITAL_TWIN_PERCEPTION=' + marker
+            + ' errors=' + json.dumps(metrics['position_error_m'])
+        )
+
+    def render_video(self, metrics):
+        output = self.output_dir / 'digital_twin_perception.mp4'
+        writer = cv2.VideoWriter(
+            str(output), cv2.VideoWriter_fourcc(*'mp4v'), 10.0, (960, 540)
+        )
+        if not writer.isOpened():
+            raise RuntimeError('Could not create perception MP4')
+        last = None
+        for encoded, robot, estimates, events in self.frames:
+            camera = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if camera is None:
+                continue
+            canvas = np.full((540, 960, 3), (22, 26, 31), dtype=np.uint8)
+            camera = cv2.resize(camera, (600, 450), interpolation=cv2.INTER_NEAREST)
+            canvas[62:512, 20:620] = camera
+            cv2.putText(canvas, 'VICTIM / HAZARD 3D LOCALIZATION', (20, 39),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.62, (235, 240, 244), 2, cv2.LINE_AA)
+            left, top, width, height = 650, 62, 290, 450
+            cv2.rectangle(canvas, (left, top), (left + width, top + height), (52, 60, 68), -1)
+            cv2.putText(canvas, 'CAMERA + OUSTER', (left + 15, top + 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (100, 210, 255), 1, cv2.LINE_AA)
+            scale = 42.0
+            origin = (left + 22, top + 255)
+
+            def pixel(point):
+                return (int(origin[0] + point[0] * scale), int(origin[1] - point[1] * scale))
+
+            for y_value in (-1.5, 1.5):
+                cv2.line(canvas, pixel((-0.2, y_value)), pixel((6.3, y_value)), (112, 112, 118), 7)
+            cv2.line(canvas, pixel((6.3, -1.5)), pixel((6.3, 1.5)), (112, 112, 118), 7)
+            cv2.circle(canvas, pixel(robot), 7, (80, 160, 255), -1)
+            for label, truth in GROUND_TRUTH.items():
+                color = COLORS[label]
+                cv2.circle(canvas, pixel(truth), 8, color, 2)
+                estimate = estimates.get(label)
+                if estimate is not None:
+                    cv2.circle(canvas, pixel(estimate), 5, color, -1)
+                    cv2.line(canvas, pixel(truth), pixel(estimate), (235, 235, 235), 1)
+            y_text = top + 315
+            for label in ('victim_candidate', 'hazard_candidate'):
+                short = 'VICTIM' if 'victim' in label else 'HAZARD'
+                estimate = estimates.get(label)
+                state = '3D LOCK' if estimate is not None else 'SEARCH'
+                event = 'EVENT' if label in events else 'VERIFYING'
+                cv2.putText(canvas, f'{short}: {state} / {event}', (left + 15, y_text),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, COLORS[label], 1, cv2.LINE_AA)
+                if estimate is not None:
+                    cv2.putText(canvas, f'  ({estimate[0]:.2f}, {estimate[1]:.2f}, {estimate[2]:.2f})m',
+                                (left + 15, y_text + 20), cv2.FONT_HERSHEY_SIMPLEX,
+                                0.34, (220, 225, 230), 1, cv2.LINE_AA)
+                y_text += 58
+            writer.write(canvas)
+            last = canvas
+        writer.release()
+        if last is not None:
+            result = 'PASS' if metrics['passed'] else 'FAIL'
+            cv2.putText(last, result, (850, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.65,
+                        (80, 220, 120) if metrics['passed'] else (65, 95, 245), 2, cv2.LINE_AA)
+            cv2.imwrite(str(self.output_dir / 'perception_result.png'), last)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = PerceptionHarness()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

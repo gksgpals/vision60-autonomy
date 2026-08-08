@@ -1,0 +1,12 @@
+std_msgs/Header header
+string mission_id
+string waypoint_id
+geometry_msgs/Pose pose
+string channel
+float32 signal_strength_dbm
+float32 snr_db
+float32 packet_loss_ratio
+float32 latency_ms
+builtin_interfaces/Time last_connected_time
+bool safe_to_return
+string route_edge_id

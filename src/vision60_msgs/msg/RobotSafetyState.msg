@@ -1,0 +1,9 @@
+std_msgs/Header header
+bool walk_enabled
+bool emergency_stop
+bool command_timed_out
+bool localization_healthy
+bool lidar_healthy
+bool sdk_connected
+bool motion_allowed
+string stop_reason

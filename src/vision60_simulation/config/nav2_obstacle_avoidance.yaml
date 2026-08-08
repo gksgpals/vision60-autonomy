@@ -1,0 +1,214 @@
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    controller_frequency: 10.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+    odom_topic: /vision60/odom
+    progress_checker_plugin: progress_checker
+    goal_checker_plugins: [goal_checker, recovery_goal_checker]
+    controller_plugins: [FollowPath, RecoveryPath]
+    progress_checker:
+      plugin: nav2_controller::SimpleProgressChecker
+      required_movement_radius: 0.05
+      movement_time_allowance: 30.0
+    goal_checker:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 3.14
+      stateful: true
+    recovery_goal_checker:
+      plugin: nav2_controller::SimpleGoalChecker
+      xy_goal_tolerance: 0.65
+      yaw_goal_tolerance: 3.14
+      stateful: true
+    FollowPath:
+      plugin: dwb_core::DWBLocalPlanner
+      min_vel_x: 0.0
+      max_vel_x: 0.28
+      min_vel_y: 0.0
+      max_vel_y: 0.0
+      max_vel_theta: 0.75
+      min_speed_xy: 0.0
+      max_speed_xy: 0.28
+      min_speed_theta: 0.0
+      acc_lim_x: 0.45
+      acc_lim_y: 0.0
+      acc_lim_theta: 1.2
+      decel_lim_x: -0.55
+      decel_lim_y: 0.0
+      decel_lim_theta: -1.2
+      vx_samples: 18
+      vy_samples: 1
+      vtheta_samples: 30
+      sim_time: 2.0
+      linear_granularity: 0.04
+      angular_granularity: 0.02
+      transform_tolerance: 0.3
+      xy_goal_tolerance: 0.15
+      trans_stopped_velocity: 0.02
+      short_circuit_trajectory_evaluation: true
+      stateful: true
+      critics: [RotateToGoal, Oscillation, BaseObstacle, GoalAlign, PathAlign, PathDist, GoalDist]
+      BaseObstacle.scale: 0.12
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.10
+      GoalAlign.scale: 20.0
+      GoalAlign.forward_point_distance: 0.10
+      PathDist.scale: 32.0
+      GoalDist.scale: 8.0
+      RotateToGoal.scale: 18.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+    RecoveryPath:
+      plugin: nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController
+      desired_linear_vel: 0.20
+      lookahead_dist: 0.35
+      min_lookahead_dist: 0.20
+      max_lookahead_dist: 0.50
+      lookahead_time: 1.5
+      rotate_to_heading_angular_vel: 0.60
+      transform_tolerance: 0.30
+      use_velocity_scaled_lookahead_dist: true
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.50
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.90
+      regulated_linear_scaling_min_speed: 0.05
+      use_rotate_to_heading: false
+      allow_reversing: true
+      rotate_to_heading_min_angle: 0.50
+      max_angular_accel: 1.50
+
+planner_server:
+  ros__parameters:
+    use_sim_time: true
+    expected_planner_frequency: 2.0
+    planner_plugins: [GridBased]
+    GridBased:
+      plugin: nav2_navfn_planner/NavfnPlanner
+      tolerance: 0.20
+      use_astar: true
+      allow_unknown: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: true
+      update_frequency: 5.0
+      publish_frequency: 1.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 10
+      height: 5
+      resolution: 0.05
+      footprint: "[[-0.50, -0.30], [-0.50, 0.30], [0.50, 0.30], [0.50, -0.30]]"
+      transform_tolerance: 0.3
+      track_unknown_space: false
+      plugins: [static_layer, inflation_layer]
+      static_layer:
+        plugin: nav2_costmap_2d::StaticLayer
+        map_subscribe_transient_local: true
+        subscribe_to_updates: true
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        cost_scaling_factor: 4.0
+      inflation_radius: 0.60
+      always_send_full_costmap: true
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: true
+      update_frequency: 8.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 7
+      height: 5
+      resolution: 0.05
+      footprint: "[[-0.50, -0.30], [-0.50, 0.30], [0.50, 0.30], [0.50, -0.30]]"
+      transform_tolerance: 0.3
+      plugins: [voxel_layer, inflation_layer]
+      voxel_layer:
+        plugin: nav2_costmap_2d::VoxelLayer
+        enabled: true
+        publish_voxel_map: true
+        origin_z: 0.0
+        z_resolution: 0.10
+        z_voxels: 16
+        max_obstacle_height: 1.8
+        mark_threshold: 0
+        observation_sources: ouster
+        ouster:
+          topic: /ouster/points
+          data_type: PointCloud2
+          clearing: true
+          marking: true
+          obstacle_min_range: 0.15
+          obstacle_max_range: 8.0
+          raytrace_min_range: 0.15
+          raytrace_max_range: 9.0
+          min_obstacle_height: 0.05
+          max_obstacle_height: 1.8
+      inflation_layer:
+        plugin: nav2_costmap_2d::InflationLayer
+        cost_scaling_factor: 4.0
+        inflation_radius: 0.52
+      always_send_full_costmap: true
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: true
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: OPEN_LOOP
+    max_velocity: [0.28, 0.0, 0.75]
+    min_velocity: [-0.20, 0.0, -0.75]
+    max_accel: [0.45, 0.0, 1.2]
+    max_decel: [-0.55, 0.0, -1.2]
+    odom_topic: /vision60/odom
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 0.5
+
+collision_monitor:
+  ros__parameters:
+    use_sim_time: true
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: /cmd_vel_smoothed
+    cmd_vel_out_topic: /cmd_vel_collision_checked
+    transform_tolerance: 0.3
+    source_timeout: 0.6
+    stop_pub_timeout: 1.0
+    enabled: true
+    polygons: [StopZone]
+    StopZone:
+      type: polygon
+      points: [0.20, 0.32, 0.20, -0.32, -0.38, -0.32, -0.38, 0.32]
+      action_type: stop
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: /safety/stop_zone
+      enabled: true
+    observation_sources: [ouster]
+    ouster:
+      type: pointcloud
+      topic: /ouster/points
+      min_height: 0.05
+      max_height: 1.8
+      enabled: true
+
+lifecycle_manager_navigation:
+  ros__parameters:
+    use_sim_time: true
+    autostart: true
+    node_names: [planner_server, controller_server, velocity_smoother, collision_monitor]

@@ -1,0 +1,6 @@
+{
+  "mission_id": "mission_001",
+  "scene_id": "full_system_sensor_mock_scene_001",
+  "source_id": "full_system_sensor_mock_replay",
+  "coordinate_frame": "odom"
+}

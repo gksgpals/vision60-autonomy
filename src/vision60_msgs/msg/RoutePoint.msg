@@ -1,0 +1,10 @@
+std_msgs/Header header
+string mission_id
+string route_edge_id
+geometry_msgs/Pose pose
+float32 distance_from_previous_m
+float32 heading_change_rad
+uint8 communication_state
+float32 packet_loss_ratio
+float32 latency_ms
+bool safe_to_return

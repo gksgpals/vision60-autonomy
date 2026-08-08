@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Convert Gazebo's model pose stream to the autonomy odometry contract."""
+
+import math
+
+import rclpy
+from geometry_msgs.msg import PoseArray, TransformStamped
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
+
+
+def yaw_from_quaternion(quaternion):
+    """Return planar yaw from a geometry quaternion."""
+    siny = 2.0 * (
+        quaternion.w * quaternion.z + quaternion.x * quaternion.y
+    )
+    cosy = 1.0 - 2.0 * (
+        quaternion.y * quaternion.y + quaternion.z * quaternion.z
+    )
+    return math.atan2(siny, cosy)
+
+
+def wrap_angle(angle):
+    """Wrap an angular difference to [-pi, pi]."""
+    return math.atan2(math.sin(angle), math.cos(angle))
+
+
+class PoseToOdometry(Node):
+    """Publish model odometry and the TF frames used by autonomy nodes."""
+
+    def __init__(self):
+        super().__init__('vision60_pose_to_odometry')
+        self.publisher = self.create_publisher(Odometry, '/vision60/odom', 20)
+        self.tf_broadcaster = TransformBroadcaster(self)
+        self.static_broadcaster = StaticTransformBroadcaster(self)
+        self.previous = None
+        self.create_subscription(
+            PoseArray, '/vision60/sim/poses', self.pose_callback, 20
+        )
+        self.publish_static_transforms()
+
+    def publish_static_transforms(self):
+        """Publish the idealized sensor mounting geometry."""
+        stamp = self.get_clock().now().to_msg()
+        transforms = []
+        for parent, child, xyz, quaternion in (
+            ('map', 'odom', (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            ('base_link', 'os_sensor', (0.20, 0.0, 0.45), (0.0, 0.0, 0.0, 1.0)),
+            ('base_link', 'camera_optical', (0.33, 0.0, 0.35), (0.0, 0.0, 0.0, 1.0)),
+        ):
+            transform = TransformStamped()
+            transform.header.stamp = stamp
+            transform.header.frame_id = parent
+            transform.child_frame_id = child
+            transform.transform.translation.x = xyz[0]
+            transform.transform.translation.y = xyz[1]
+            transform.transform.translation.z = xyz[2]
+            transform.transform.rotation.x = quaternion[0]
+            transform.transform.rotation.y = quaternion[1]
+            transform.transform.rotation.z = quaternion[2]
+            transform.transform.rotation.w = quaternion[3]
+            transforms.append(transform)
+        self.static_broadcaster.sendTransform(transforms)
+
+    def pose_callback(self, message):
+        if not message.poses:
+            return
+        pose = message.poses[0]
+        now = self.get_clock().now()
+        yaw = yaw_from_quaternion(pose.orientation)
+        vx = vy = wz = 0.0
+        if self.previous is not None:
+            previous_time, previous_x, previous_y, previous_yaw = self.previous
+            dt = (now - previous_time).nanoseconds / 1e9
+            if dt > 1e-4:
+                vx = (pose.position.x - previous_x) / dt
+                vy = (pose.position.y - previous_y) / dt
+                wz = wrap_angle(yaw - previous_yaw) / dt
+        self.previous = (
+            now, pose.position.x, pose.position.y, yaw
+        )
+
+        odometry = Odometry()
+        odometry.header.stamp = now.to_msg()
+        odometry.header.frame_id = 'odom'
+        odometry.child_frame_id = 'base_link'
+        odometry.pose.pose = pose
+        odometry.twist.twist.linear.x = vx
+        odometry.twist.twist.linear.y = vy
+        odometry.twist.twist.angular.z = wz
+        self.publisher.publish(odometry)
+
+        transform = TransformStamped()
+        transform.header = odometry.header
+        transform.child_frame_id = 'base_link'
+        transform.transform.translation.x = pose.position.x
+        transform.transform.translation.y = pose.position.y
+        transform.transform.translation.z = pose.position.z
+        transform.transform.rotation = pose.orientation
+        self.tf_broadcaster.sendTransform(transform)
+
+
+def main():
+    rclpy.init()
+    node = PoseToOdometry()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

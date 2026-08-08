@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>vision60_bringup</name>
+  <version>0.0.0</version>
+  <description>Launch and configuration for Vision 60 autonomy tests.</description>
+  <maintainer email="support@example.com">Kookmin AI Lab</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>nav2_controller</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>nav2_velocity_smoother</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>twist_mux</exec_depend>
+  <exec_depend>topic_tools</exec_depend>
+  <exec_depend>foxglove_bridge</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>glim_ros</exec_depend>
+  <exec_depend>vision60_mock</exec_depend>
+  <exec_depend>vision60_bridge</exec_depend>
+  <exec_depend>mission_logger</exec_depend>
+  <exec_depend>comm_recovery_manager</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

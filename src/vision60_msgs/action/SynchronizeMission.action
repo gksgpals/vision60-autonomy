@@ -1,0 +1,10 @@
+string mission_id
+---
+bool success
+uint32 synchronized_items
+uint32 failed_items
+string message
+---
+float32 progress_ratio
+uint32 remaining_items
+string current_item

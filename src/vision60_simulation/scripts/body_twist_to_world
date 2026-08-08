@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Convert ROS body-frame velocity to Gazebo world-frame velocity."""
+
+import math
+
+import rclpy
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+
+
+class BodyTwistToWorld(Node):
+    """Preserve standard base_link Twist semantics at the simulator boundary."""
+
+    def __init__(self):
+        super().__init__('vision60_body_twist_to_world')
+        self.yaw = None
+        self.publisher = self.create_publisher(
+            Twist, '/vision60/sim/cmd_vel_world', 10
+        )
+        self.create_subscription(
+            Odometry, '/vision60/odom', self.odom_callback, 20
+        )
+        self.create_subscription(
+            Twist, '/cmd_vel_safe', self.command_callback, 20
+        )
+
+    def odom_callback(self, message):
+        quaternion = message.pose.pose.orientation
+        siny = 2.0 * (
+            quaternion.w * quaternion.z + quaternion.x * quaternion.y
+        )
+        cosy = 1.0 - 2.0 * (
+            quaternion.y * quaternion.y + quaternion.z * quaternion.z
+        )
+        self.yaw = math.atan2(siny, cosy)
+
+    def command_callback(self, message):
+        output = Twist()
+        if self.yaw is None:
+            self.publisher.publish(output)
+            return
+        cosine = math.cos(self.yaw)
+        sine = math.sin(self.yaw)
+        output.linear.x = cosine * message.linear.x - sine * message.linear.y
+        output.linear.y = sine * message.linear.x + cosine * message.linear.y
+        output.linear.z = message.linear.z
+        output.angular = message.angular
+        self.publisher.publish(output)
+
+
+def main():
+    rclpy.init()
+    node = BodyTwistToWorld()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

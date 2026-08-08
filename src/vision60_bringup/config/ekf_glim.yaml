@@ -1,0 +1,27 @@
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.5
+    two_d_mode: false
+    publish_tf: false
+    print_diagnostics: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # GLIM already fuses Ouster point clouds and IMU. Fusing /ouster/imu
+    # again here would count the same measurement twice.
+    odom0: /slam/odom
+    odom0_config:
+      [true,  true,  true,
+       true,  true,  true,
+       true,  true,  true,
+       false, false, false,
+       false, false, false]
+    odom0_queue_size: 20
+    odom0_differential: false
+    odom0_relative: false
+
+    # Add Vision60 body odometry as odom1 after the KRM SDK contract is known.

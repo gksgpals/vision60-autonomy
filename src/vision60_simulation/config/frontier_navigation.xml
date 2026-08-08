@@ -1,0 +1,17 @@
+<!-- Frontier goals use the normal controller and goal checker explicitly. -->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <PipelineSequence name="NavigateFrontier">
+      <GoalUpdatedController>
+        <ComputePathToPose
+          goal="{goal}"
+          path="{path}"
+          planner_id="GridBased"/>
+      </GoalUpdatedController>
+      <FollowPath
+        path="{path}"
+        controller_id="FollowPath"
+        goal_checker_id="goal_checker"/>
+    </PipelineSequence>
+  </BehaviorTree>
+</root>

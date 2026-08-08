@@ -1,0 +1,94 @@
+# NVIDIA TAO 6.0 RT-DETR contract for the D-Fire fire/smoke shard.
+# Paths are inside the container started by scripts/run_tao_rtdetr.sh.
+results_dir: /workspace/results
+
+model:
+  backbone: resnet_18
+  train_backbone: true
+  num_queries: 100
+  num_select: 100
+
+dataset:
+  train_data_sources:
+    - image_dir: /workspace/data/tao_rtdetr_safe/images/train
+      json_file: /workspace/data/tao_rtdetr_safe/annotations/train.json
+  val_data_sources:
+    image_dir: /workspace/data/tao_rtdetr_safe/images/val
+    json_file: /workspace/data/tao_rtdetr_safe/annotations/val.json
+  test_data_sources:
+    image_dir: /workspace/data/tao_rtdetr_safe/images/test
+    json_file: /workspace/data/tao_rtdetr_safe/annotations/test.json
+  infer_data_sources:
+    image_dir:
+      - /workspace/data/tao_rtdetr_safe/images/test
+    classmap: /workspace/data/tao_rtdetr_safe/classmap.txt
+  num_classes: 2
+  batch_size: 8
+  workers: 8
+
+train:
+  results_dir: /workspace/results/train
+  num_epochs: 50
+  checkpoint_interval: 5
+  validation_interval: 1
+  clip_grad_norm: 0.1
+  precision: fp16
+  distributed_strategy: ddp
+  activation_checkpoint: true
+  num_gpus: 1
+  gpu_ids: [0]
+  num_nodes: 1
+  seed: 2828
+  is_dry_run: false
+  enable_ema: true
+  optim:
+    optimizer: AdamW
+    lr: 0.0002
+    lr_backbone: 0.00002
+    lr_linear_proj_mult: 0.1
+    momentum: 0.9
+    weight_decay: 0.0001
+    lr_scheduler: MultiStep
+    lr_decay: 0.1
+    lr_steps: [40]
+
+evaluate:
+  results_dir: /workspace/results/evaluate
+  checkpoint: /workspace/results/train/model_epoch_049-EMA.pth
+  conf_threshold: 0.0
+  input_width: 640
+  input_height: 384
+
+inference:
+  results_dir: /workspace/results/inference
+  checkpoint: /workspace/results/train/model_epoch_049-EMA.pth
+  conf_threshold: 0.35
+  input_width: 640
+  input_height: 384
+  color_map:
+    fire: red
+    smoke: gray
+
+export:
+  checkpoint: /workspace/results/train/model_epoch_049-EMA.pth
+  onnx_file: /workspace/results/export/vision60_fire_smoke_rtdetr.onnx
+  on_cpu: false
+  opset_version: 17
+  input_channel: 3
+  input_width: 640
+  input_height: 384
+  batch_size: 1
+
+gen_trt_engine:
+  onnx_file: /workspace/results/export/vision60_fire_smoke_rtdetr.onnx
+  trt_engine: /workspace/results/engine/vision60_fire_smoke_rtdetr_fp16.engine
+  input_channel: 3
+  input_width: 640
+  input_height: 384
+  batch_size: 1
+  tensorrt:
+    data_type: fp16
+    workspace_size: 2048
+    min_batch_size: 1
+    opt_batch_size: 1
+    max_batch_size: 1

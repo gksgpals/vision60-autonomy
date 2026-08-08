@@ -1,0 +1,6 @@
+string mission_id
+string waypoint_id
+bool force
+---
+bool accepted
+string message

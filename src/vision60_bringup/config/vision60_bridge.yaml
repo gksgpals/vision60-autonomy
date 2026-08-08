@@ -1,0 +1,13 @@
+vision60_bridge:
+  ros__parameters:
+    transport: mock
+    allow_motion_output: false
+    publish_rate_hz: 20.0
+    command_timeout_s: 0.3
+    localization_timeout_s: 0.5
+    lidar_timeout_s: 0.5
+    max_linear_x_mps: 0.5
+    max_linear_y_mps: 0.3
+    max_angular_z_rps: 0.6
+    max_linear_accel_mps2: 0.5
+    max_angular_accel_rps2: 1.0

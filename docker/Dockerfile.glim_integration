@@ -1,0 +1,19 @@
+FROM koide3/glim_ros2:humble
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-humble-robot-localization \
+        ros-humble-tf2-ros \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root/vision60_ws
+COPY src/vision60_bringup src/vision60_bringup
+
+RUN bash -lc \
+    'source /opt/ros/humble/setup.bash \
+     && source /root/ros2_ws/install/setup.bash \
+     && colcon build --symlink-install --packages-select vision60_bringup'
+
+CMD ["bash"]

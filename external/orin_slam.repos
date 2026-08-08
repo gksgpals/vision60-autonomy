@@ -1,0 +1,13 @@
+repositories:
+  glim:
+    type: git
+    url: https://github.com/koide3/glim.git
+    version: aafbbff547bef21e48234ed3f810729552c2aa80
+  glim_ext:
+    type: git
+    url: https://github.com/koide3/glim_ext.git
+    version: f8ef17c32a507d1d754502d6eca9ec876c5d3621
+  glim_ros:
+    type: git
+    url: https://github.com/koide3/glim_ros2.git
+    version: 4dccdaa4a1b27a3ab324981336a8fdb4ea67f1b4

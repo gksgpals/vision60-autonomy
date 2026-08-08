@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Verify live Gazebo sensor topics without physical robot hardware."""
+
+import sys
+import time
+
+import rclpy
+from geometry_msgs.msg import PoseArray
+from rclpy.node import Node
+from rosgraph_msgs.msg import Clock
+from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+
+
+class DigitalTwinProbe(Node):
+    """Collect a minimal complete sensor sample from the digital twin."""
+
+    def __init__(self):
+        super().__init__('vision60_digital_twin_probe')
+        self.samples = {}
+        self.create_subscription(
+            Clock, '/clock', self._clock_callback, 10
+        )
+        self.create_subscription(
+            Imu, '/vision60/sim/imu', self._imu, 10
+        )
+        self.create_subscription(
+            PointCloud2, '/ouster/points', self._cloud, 10
+        )
+        self.create_subscription(
+            Image, '/camera/image_raw', self._image, 10
+        )
+        self.create_subscription(
+            CameraInfo, '/camera/camera_info', self._camera_info, 10
+        )
+        self.create_subscription(
+            PoseArray, '/vision60/sim/poses', self._poses, 10
+        )
+
+    def _clock_callback(self, message):
+        self.samples['clock'] = message
+
+    def _imu(self, message):
+        self.samples['imu'] = message
+
+    def _cloud(self, message):
+        if int(message.width) * int(message.height) >= 1000:
+            self.samples['cloud'] = message
+
+    def _image(self, message):
+        if (
+            int(message.width) == 160
+            and int(message.height) == 120
+            and len(message.data) >= 160 * 120 * 3
+        ):
+            self.samples['image'] = message
+
+    def _camera_info(self, message):
+        if (
+            int(message.width) == 160
+            and int(message.height) == 120
+            and float(message.k[0]) > 0.0
+            and float(message.k[4]) > 0.0
+        ):
+            self.samples['camera_info'] = message
+
+    def _poses(self, message):
+        stable = [
+            pose for pose in message.poses
+            if (
+                abs(float(pose.position.x)) < 0.1
+                and abs(float(pose.position.y)) < 0.1
+                and 0.50 < float(pose.position.z) < 0.62
+                and abs(float(pose.orientation.w)) > 0.99
+            )
+        ]
+        if stable:
+            self.samples['stable_pose'] = stable[0]
+
+
+def main():
+    """Spin until every physical sensor topic is valid or timeout."""
+    rclpy.init()
+    node = DigitalTwinProbe()
+    deadline = time.monotonic() + 45.0
+    required = {
+        'clock', 'imu', 'cloud', 'image', 'camera_info', 'stable_pose'
+    }
+    while time.monotonic() < deadline and not required <= node.samples.keys():
+        rclpy.spin_once(node, timeout_sec=0.2)
+    missing = sorted(required - node.samples.keys())
+    if missing:
+        print(f'DIGITAL_TWIN_SENSOR_TEST=FAIL missing={missing}')
+        node.destroy_node()
+        rclpy.shutdown()
+        return 1
+    cloud = node.samples['cloud']
+    print(
+        'DIGITAL_TWIN_SENSOR_TEST=PASS '
+        f'points={int(cloud.width) * int(cloud.height)} '
+        'image=160x120 imu=present calibration=present physics=stable'
+    )
+    node.destroy_node()
+    rclpy.shutdown()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

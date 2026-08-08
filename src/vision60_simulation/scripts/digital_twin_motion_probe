@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""Drive the digital twin, verify stopping, and render a visual report."""
+
+import json
+import math
+from pathlib import Path
+import sys
+import time
+
+import cv2
+import numpy as np
+import rclpy
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import CameraInfo, Image, Imu, PointCloud2
+
+
+class MotionProbe(Node):
+    """Exercise a short safe drive and collect visible validation evidence."""
+
+    def __init__(self):
+        super().__init__('vision60_digital_twin_motion_probe')
+        self.declare_parameter('output_dir', '/artifacts')
+        self.output_dir = Path(
+            self.get_parameter('output_dir').value
+        )
+        self.command = self.create_publisher(Twist, '/cmd_vel_safe', 10)
+        self.create_subscription(Odometry, '/vision60/odom', self.on_odom, 20)
+        self.create_subscription(
+            Image, '/camera/image_raw', self.on_image, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            Imu, '/vision60/sim/imu', self.on_imu, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            PointCloud2, '/ouster/points', self.on_cloud,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            CameraInfo, '/camera/camera_info', self.on_info,
+            qos_profile_sensor_data,
+        )
+        self.odom = None
+        self.path = []
+        self.image = None
+        self.imu_seen = False
+        self.cloud_points = 0
+        self.calibration_seen = False
+        self.recording = False
+        self.phase = 'WAITING'
+        self.video_frames = []
+
+    def on_odom(self, message):
+        self.odom = message
+        point = (
+            float(message.pose.pose.position.x),
+            float(message.pose.pose.position.y),
+            float(message.pose.pose.position.z),
+        )
+        if not self.path or math.dist(point[:2], self.path[-1][:2]) > 0.005:
+            self.path.append(point)
+
+    def on_image(self, message):
+        if message.width <= 0 or message.height <= 0:
+            return
+        raw = np.frombuffer(message.data, dtype=np.uint8)
+        expected = int(message.height) * int(message.step)
+        if raw.size < expected or int(message.step) < int(message.width) * 3:
+            return
+        frame = raw[:expected].reshape(int(message.height), int(message.step))
+        frame = frame[:, :int(message.width) * 3].reshape(
+            int(message.height), int(message.width), 3
+        )
+        if message.encoding.lower() == 'rgb8':
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        self.image = frame.copy()
+        if self.recording and self.odom is not None:
+            position = self.odom.pose.pose.position
+            self.video_frames.append((
+                self.image.copy(),
+                float(position.x),
+                float(position.y),
+                self.phase,
+            ))
+
+    def on_imu(self, _message):
+        self.imu_seen = True
+
+    def on_cloud(self, message):
+        self.cloud_points = int(message.width) * int(message.height)
+
+    def on_info(self, message):
+        self.calibration_seen = bool(
+            message.width > 0 and message.k[0] > 0.0
+        )
+
+    def publish_velocity(self, linear_x):
+        message = Twist()
+        message.linear.x = float(linear_x)
+        self.command.publish(message)
+
+    def spin_for(self, duration, velocity):
+        deadline = time.monotonic() + duration
+        while time.monotonic() < deadline:
+            self.publish_velocity(velocity)
+            rclpy.spin_once(self, timeout_sec=0.04)
+
+    def wait_for_inputs(self, timeout=35.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if (
+                self.odom is not None and self.image is not None
+                and self.imu_seen and self.cloud_points >= 1000
+                and self.calibration_seen
+            ):
+                return True
+        return False
+
+    def render_report(self, metrics):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        canvas = np.full((720, 1280, 3), (22, 26, 31), dtype=np.uint8)
+        cv2.putText(
+            canvas, 'VISION 60 DIGITAL TWIN - MOTION TEST', (42, 55),
+            cv2.FONT_HERSHEY_SIMPLEX, 1.05, (240, 245, 248), 2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            canvas, 'Gazebo Fortress / headless physics / ROS 2 Humble',
+            (44, 88), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (150, 165, 178),
+            1, cv2.LINE_AA,
+        )
+
+        map_left, map_top, map_width, map_height = 42, 125, 730, 520
+        cv2.rectangle(
+            canvas, (map_left, map_top),
+            (map_left + map_width, map_top + map_height),
+            (52, 60, 68), -1,
+        )
+        scale = 95.0
+        origin = (map_left + 95, map_top + map_height // 2)
+
+        def pixel(x_value, y_value):
+            return (
+                int(origin[0] + x_value * scale),
+                int(origin[1] - y_value * scale),
+            )
+
+        for x_value in np.arange(0.0, 6.1, 1.0):
+            x_pixel = pixel(x_value, 0.0)[0]
+            cv2.line(
+                canvas, (x_pixel, map_top), (x_pixel, map_top + map_height),
+                (68, 77, 86), 1,
+            )
+        for y_value in np.arange(-2.0, 2.1, 1.0):
+            y_pixel = pixel(0.0, y_value)[1]
+            cv2.line(
+                canvas, (map_left, y_pixel), (map_left + map_width, y_pixel),
+                (68, 77, 86), 1,
+            )
+
+        for center_y in (-1.35, 1.35):
+            first = pixel(1.0, center_y + 0.125)
+            second = pixel(5.0, center_y - 0.125)
+            cv2.rectangle(canvas, first, second, (112, 101, 91), -1)
+        for center_x, center_y, size_x, size_y in (
+            (2.0, 0.65, 0.70, 0.45),
+            (3.3, -0.55, 0.55, 0.50),
+        ):
+            first = pixel(center_x - size_x / 2, center_y + size_y / 2)
+            second = pixel(center_x + size_x / 2, center_y - size_y / 2)
+            cv2.rectangle(canvas, first, second, (92, 72, 56), -1)
+        first = pixel(4.2, 0.7)
+        second = pixel(6.8, -0.7)
+        cv2.rectangle(canvas, first, second, (135, 130, 122), -1)
+
+        if len(self.path) >= 2:
+            path_pixels = np.array(
+                [pixel(value[0], value[1]) for value in self.path],
+                dtype=np.int32,
+            )
+            cv2.polylines(
+                canvas, [path_pixels], False, (55, 205, 255), 5,
+                cv2.LINE_AA,
+            )
+            cv2.circle(canvas, tuple(path_pixels[0]), 10, (70, 210, 110), -1)
+            cv2.circle(canvas, tuple(path_pixels[-1]), 10, (65, 95, 245), -1)
+        cv2.putText(
+            canvas, 'TOP VIEW: measured odometry path',
+            (map_left + 16, map_top + 30), cv2.FONT_HERSHEY_SIMPLEX,
+            0.60, (225, 232, 237), 1, cv2.LINE_AA,
+        )
+        cv2.putText(
+            canvas, 'START', (pixel(0, 0)[0] - 30, pixel(0, 0)[1] + 32),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (70, 210, 110), 1,
+            cv2.LINE_AA,
+        )
+
+        panel_left = 810
+        cv2.rectangle(canvas, (panel_left, 125), (1238, 446), (36, 43, 50), -1)
+        camera = cv2.resize(self.image, (400, 300), interpolation=cv2.INTER_NEAREST)
+        canvas[135:435, panel_left + 14:panel_left + 414] = camera
+        cv2.putText(
+            canvas, 'ACTUAL SIMULATED FRONT CAMERA', (panel_left + 22, 470),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.53, (210, 220, 226), 1,
+            cv2.LINE_AA,
+        )
+
+        cv2.rectangle(canvas, (panel_left, 500), (1238, 645), (36, 43, 50), -1)
+        status_color = (80, 220, 120) if metrics['passed'] else (70, 80, 245)
+        lines = (
+            ('RESULT', 'PASS' if metrics['passed'] else 'FAIL', status_color),
+            ('Movement', f"{metrics['distance_m']:.3f} m", (225, 232, 237)),
+            ('After stop', f"{metrics['stop_drift_m']:.3f} m drift", (225, 232, 237)),
+            ('Sensors', f"LiDAR {metrics['lidar_points']} pts / RGB / IMU", (225, 232, 237)),
+        )
+        for index, (label, value, color) in enumerate(lines):
+            y_value = 530 + index * 31
+            cv2.putText(
+                canvas, label, (panel_left + 18, y_value),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.52, (145, 160, 172), 1,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                canvas, value, (panel_left + 145, y_value),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.56, color, 2 if index == 0 else 1,
+                cv2.LINE_AA,
+            )
+        cv2.putText(
+            canvas, 'Green=start  Red=final  Yellow=measured path', (44, 685),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.50, (165, 178, 188), 1,
+            cv2.LINE_AA,
+        )
+        cv2.imwrite(str(self.output_dir / 'digital_twin_test_result.png'), canvas)
+        (self.output_dir / 'test_report.json').write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2), encoding='utf-8'
+        )
+
+    def render_video(self, metrics):
+        """Save time-varying camera and measured path evidence as MP4."""
+        output = self.output_dir / 'digital_twin_drive_test.mp4'
+        writer = cv2.VideoWriter(
+            str(output), cv2.VideoWriter_fourcc(*'mp4v'), 10.0, (960, 540)
+        )
+        if not writer.isOpened():
+            raise RuntimeError('Could not open MP4 video writer')
+        measured_path = []
+        for camera, x_value, y_value, phase in self.video_frames:
+            measured_path.append((x_value, y_value))
+            canvas = np.full((540, 960, 3), (22, 26, 31), dtype=np.uint8)
+            camera_panel = cv2.resize(
+                camera, (600, 450), interpolation=cv2.INTER_NEAREST
+            )
+            canvas[62:512, 20:620] = camera_panel
+            cv2.putText(
+                canvas, 'SIMULATED FRONT CAMERA', (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (235, 240, 244), 2,
+                cv2.LINE_AA,
+            )
+            status_color = (60, 210, 255) if phase == 'DRIVING' else (80, 220, 120)
+            cv2.putText(
+                canvas, phase, (475, 40), cv2.FONT_HERSHEY_SIMPLEX,
+                0.70, status_color, 2, cv2.LINE_AA,
+            )
+
+            map_left, map_top, map_width, map_height = 650, 62, 290, 450
+            cv2.rectangle(
+                canvas, (map_left, map_top),
+                (map_left + map_width, map_top + map_height),
+                (52, 60, 68), -1,
+            )
+            scale = 70.0
+            origin = (map_left + 42, map_top + map_height // 2)
+
+            def pixel(world_x, world_y):
+                return (
+                    int(origin[0] + world_x * scale),
+                    int(origin[1] - world_y * scale),
+                )
+
+            for center_y in (-1.35, 1.35):
+                cv2.line(
+                    canvas, pixel(1.0, center_y), pixel(4.0, center_y),
+                    (112, 101, 91), 14,
+                )
+            for center_x, center_y in ((2.0, 0.65), (3.3, -0.55)):
+                cv2.rectangle(
+                    canvas, pixel(center_x - 0.25, center_y + 0.22),
+                    pixel(center_x + 0.25, center_y - 0.22),
+                    (92, 72, 56), -1,
+                )
+            path_pixels = np.array(
+                [pixel(value[0], value[1]) for value in measured_path],
+                dtype=np.int32,
+            )
+            if len(path_pixels) >= 2:
+                cv2.polylines(
+                    canvas, [path_pixels], False, (55, 205, 255), 4,
+                    cv2.LINE_AA,
+                )
+            cv2.circle(canvas, tuple(path_pixels[0]), 7, (70, 210, 110), -1)
+            cv2.circle(canvas, tuple(path_pixels[-1]), 7, (65, 95, 245), -1)
+            cv2.putText(
+                canvas, 'LIVE ODOMETRY', (map_left + 15, map_top + 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.50, (225, 232, 237), 1,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                canvas, f"x={x_value:.2f} m", (map_left + 15, map_top + 420),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (225, 232, 237), 1,
+                cv2.LINE_AA,
+            )
+            writer.write(canvas)
+        writer.release()
+        if not output.exists() or output.stat().st_size == 0:
+            raise RuntimeError('MP4 result was not written')
+
+
+def main():
+    rclpy.init()
+    node = MotionProbe()
+    if not node.wait_for_inputs():
+        print('DIGITAL_TWIN_MOTION_TEST=FAIL reason=missing_inputs')
+        node.destroy_node()
+        rclpy.shutdown()
+        return 1
+
+    start = node.odom.pose.pose.position
+    start_xy = (float(start.x), float(start.y))
+    node.path = [(float(start.x), float(start.y), float(start.z))]
+    node.recording = True
+    node.phase = 'DRIVING'
+    node.spin_for(4.0, 0.25)
+    drive_end = node.odom.pose.pose.position
+    drive_end_xy = (float(drive_end.x), float(drive_end.y))
+    node.phase = 'STOPPED'
+    node.spin_for(2.0, 0.0)
+    node.recording = False
+    node.publish_velocity(0.0)
+    final = node.odom.pose.pose.position
+    final_xy = (float(final.x), float(final.y))
+    distance = math.dist(start_xy, final_xy)
+    stop_drift = math.dist(drive_end_xy, final_xy)
+    stable_height = 0.48 <= float(final.z) <= 0.65
+    passed = bool(
+        0.65 <= distance <= 1.30
+        and stop_drift <= 0.08
+        and stable_height
+        and node.cloud_points >= 1000
+        and node.imu_seen
+        and node.calibration_seen
+    )
+    metrics = {
+        'passed': passed,
+        'distance_m': round(distance, 4),
+        'stop_drift_m': round(stop_drift, 4),
+        'final_height_m': round(float(final.z), 4),
+        'lidar_points': node.cloud_points,
+        'camera_resolution': [int(node.image.shape[1]), int(node.image.shape[0])],
+        'imu_received': node.imu_seen,
+        'camera_calibration_received': node.calibration_seen,
+        'command': {'linear_x_mps': 0.25, 'duration_s': 4.0},
+        'environment': 'Gazebo Fortress disaster_test.sdf',
+    }
+    node.render_report(metrics)
+    node.render_video(metrics)
+    print(
+        'DIGITAL_TWIN_MOTION_TEST=' + ('PASS' if passed else 'FAIL')
+        + f' distance={distance:.3f}m stop_drift={stop_drift:.3f}m'
+        + f' height={float(final.z):.3f}m lidar_points={node.cloud_points}'
+    )
+    node.destroy_node()
+    rclpy.shutdown()
+    return 0 if passed else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

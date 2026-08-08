@@ -1,0 +1,176 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.35
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 90; 90; 90
+      Enabled: true
+      Name: Ground Grid
+      Plane: XY
+      Plane Cell Count: 40
+      Reference Frame: map
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Axis: Z
+      Channel Name: rgb
+      Class: rviz_default_plugins/PointCloud2
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: true
+      Name: Colored Scene Cloud
+      Position Transformer: XYZ
+      Queue Size: 10
+      Selectable: true
+      Size (Pixels): 2
+      Size (m): 0.03
+      Style: Points
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission/scene_cloud
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Route, Comm Zones, Mission Events
+      Namespaces:
+        communication_zones: true
+        mission_event_labels: true
+        mission_events: true
+        route: true
+      Queue Size: 100
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission/scene_markers
+    - Class: rviz_default_plugins/Marker
+      Enabled: false
+      Name: Optional Scene Mesh
+      Namespaces:
+        scene_mesh: true
+      Queue Size: 10
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission/scene_mesh
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: Optional Voxel Occupancy
+      Namespaces:
+        voxel_free: true
+        voxel_observation_bounds: true
+        voxel_occupied: true
+      Queue Size: 10
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission/voxel_markers
+    - Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 0; 220; 255
+      Enabled: true
+      Head Diameter: 0.2
+      Head Length: 0.3
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.05
+      Name: Actual Recorded Path
+      Offset: {X: 0, Y: 0, Z: 0.03}
+      Pose Color: 0; 220; 255
+      Pose Style: None
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission/recorded_path
+    - Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 255; 145; 0
+      Enabled: true
+      Head Diameter: 0.2
+      Head Length: 0.3
+      Length: 0.3
+      Line Style: Lines
+      Line Width: 0.07
+      Name: Recovery Path
+      Offset: {X: 0, Y: 0, Z: 0.06}
+      Pose Color: 255; 145; 0
+      Pose Style: None
+      Radius: 0.03
+      Shaft Diameter: 0.1
+      Shaft Length: 0.1
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mission/recovery_path
+    - Angle Tolerance: 0.1
+      Class: rviz_default_plugins/Odometry
+      Enabled: true
+      Keep: 100
+      Name: Robot Odometry
+      Position Tolerance: 0.1
+      Shape:
+        Alpha: 1
+        Axes Length: 0.4
+        Axes Radius: 0.04
+        Color: 255; 255; 255
+        Head Length: 0.1
+        Head Radius: 0.05
+        Shaft Length: 0.3
+        Shaft Radius: 0.02
+        Value: Axes
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /vision60/odom
+  Enabled: true
+  Global Options:
+    Background Color: 24; 24; 24
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 18
+      Focal Point: {X: 0, Y: 0, Z: 0}
+      Name: Operator Orbit
+      Near Clip Distance: 0.01
+      Pitch: 0.65
+      Target Frame: map
+      Yaw: 0.8
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1440

@@ -1,0 +1,6 @@
+string mission_id
+string requested_channel
+---
+bool success
+string active_channel
+string message

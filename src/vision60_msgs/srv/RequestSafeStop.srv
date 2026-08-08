@@ -1,0 +1,5 @@
+string reason
+bool emergency
+---
+bool accepted
+string message

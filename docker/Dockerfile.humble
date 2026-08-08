@@ -1,0 +1,33 @@
+FROM ros:humble-ros-base-jammy
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-humble-navigation2 \
+        ros-humble-nav2-bringup \
+        ros-humble-tf2-tools \
+        ros-humble-pcl-conversions \
+        ros-humble-cv-bridge \
+        ros-humble-tf2-eigen \
+        ros-humble-robot-localization \
+        ros-humble-twist-mux \
+        ros-humble-topic-tools \
+        ros-humble-foxglove-bridge \
+        libpcl-dev \
+        libjsoncpp-dev \
+        libtins-dev \
+        libzip-dev \
+        python3-vcstool \
+    && rm -rf /var/lib/apt/lists/*
+
+# Keep MCAP in a separate layer so operator-recording support can be updated
+# without rebuilding the much larger navigation/PCL dependency layer.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-humble-rosbag2-storage-mcap \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /ws
+
+CMD ["bash"]

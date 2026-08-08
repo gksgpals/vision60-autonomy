@@ -1,0 +1,41 @@
+foxglove_bridge:
+  ros__parameters:
+    # Bind to loopback by default. Use an SSH tunnel from the operator PC.
+    address: 127.0.0.1
+    port: 8765
+    num_threads: 2
+    min_qos_depth: 1
+    max_qos_depth: 10
+    include_hidden: false
+    publish_client_count: true
+    sysinfo: false
+
+    # Monitoring only: a Foxglove client cannot publish, change parameters,
+    # call services, or retrieve files from the robot.
+    capabilities:
+      - connectionGraph
+    client_topic_whitelist:
+      - "(?!)"
+    service_whitelist:
+      - "(?!)"
+    param_whitelist:
+      - "(?!)"
+    asset_uri_allowlist:
+      - "(?!)"
+
+    # Only mission-awareness data crosses the operator link.
+    topic_whitelist:
+      - "^/camera/image_raw$"
+      - "^/camera/camera_info$"
+      - "^/ouster/points$"
+      - "^/slam/odom$"
+      - "^/state/odometry$"
+      - "^/mission/(recorded_path|recovery_path|scene_cloud|scene_markers|event)$"
+      - "^/communication/(state|recovery_status)$"
+      - "^/vision60/(odom|safety_state|mock_obstacle_phase)$"
+      - "^/safety/collision_monitor_state$"
+      - "^/tf(_static)?$"
+    best_effort_qos_topic_whitelist:
+      - "^/camera/image_raw$"
+      - "^/camera/camera_info$"
+      - "^/ouster/points$"

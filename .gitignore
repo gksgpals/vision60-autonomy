@@ -1,0 +1,42 @@
+# ROS 2 build outputs
+build/
+install/
+log/
+
+# Local datasets, generated evidence, and third-party checkouts
+datasets.nosync/
+artifacts/
+external_src/
+
+# Personal operating notes
+docs/FIRST_DAY_RUNBOOK.md
+docs/SHUTDOWN_COMPLETION_REPORT.md
+docs/STUDY_GUIDE.md
+
+# Runtime data and model binaries
+*.bag
+*.db
+*.mcap
+*.sqlite
+*.sqlite3
+*.engine
+*.etlt
+*.onnx
+*.pt
+*.pth
+*.zip
+
+# Credentials and local configuration
+.env
+.env.*
+*.pem
+*.key
+
+# Python and editor files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,32 @@
+uint8 IDLE=0
+uint8 NORMAL=1
+uint8 DEGRADED=2
+uint8 LINK_LOST=3
+uint8 STOPPING=4
+uint8 RETURNING=5
+uint8 LINK_RECOVERED=6
+uint8 SYNCING=7
+uint8 REENTRY_TEST=8
+uint8 SAFE_STOP=9
+uint8 CHANNEL_SWITCH=10
+uint8 CLASSIFYING=11
+
+uint8 CAUSE_UNKNOWN=0
+uint8 CAUSE_LOCATION_RADIO_SHADOW=1
+uint8 CAUSE_CHANNEL_ANOMALY=2
+uint8 CAUSE_TOTAL_LINK_FAILURE=3
+uint8 CAUSE_TRANSIENT_NETWORK_LOSS=4
+uint8 CAUSE_DATA_SYNC_FAILURE=5
+uint8 CAUSE_REENTRY_NAVIGATION_FAILURE=6
+
+std_msgs/Header header
+string mission_id
+uint8 state
+string target_waypoint_id
+float32 remaining_distance_m
+string detail
+bool operator_attention_required
+string active_channel
+uint8 channel_switch_attempts
+uint8 failure_cause
+float32 failure_confidence

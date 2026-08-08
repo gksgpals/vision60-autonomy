@@ -1,0 +1,37 @@
+collision_monitor:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: /cmd_vel_smoothed
+    cmd_vel_out_topic: /cmd_vel_collision_checked
+    state_topic: /safety/collision_monitor_state
+    transform_tolerance: 0.2
+    source_timeout: 0.5
+    stop_pub_timeout: 1.0
+    enabled: true
+    polygons: [StopZone, SlowdownZone]
+    StopZone:
+      type: polygon
+      points: [0.65, 0.45, 0.65, -0.45, -0.50, -0.45, -0.50, 0.45]
+      action_type: stop
+      max_points: 3
+      visualize: true
+      polygon_pub_topic: /safety/stop_zone
+      enabled: true
+    SlowdownZone:
+      type: polygon
+      points: [1.20, 0.55, 1.20, -0.55, -0.50, -0.55, -0.50, 0.55]
+      action_type: slowdown
+      max_points: 3
+      slowdown_ratio: 0.3
+      visualize: true
+      polygon_pub_topic: /safety/slowdown_zone
+      enabled: true
+    observation_sources: [ouster]
+    ouster:
+      type: pointcloud
+      topic: /ouster/points
+      min_height: 0.10
+      max_height: 1.80
+      enabled: true

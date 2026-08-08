@@ -1,0 +1,44 @@
+schema_version: 1
+display_frame: map
+views:
+  scene_3d:
+    panel: 3D
+    topics:
+      - /mission/scene_cloud
+      - /mission/scene_markers
+      - /mission/scene_mesh
+      - /mission/voxel_markers
+      - /mission/recorded_path
+      - /mission/recovery_path
+      - /vision60/odom
+  camera:
+    panel: Image
+    topic: /camera/image_raw
+    calibration_topic: /camera/camera_info
+    transform_topic: /tf_static
+  link_quality:
+    panel: Plot
+    fields:
+      - /communication/state.signal_strength_dbm
+      - /communication/state.snr_db
+      - /communication/state.packet_loss_ratio
+      - /communication/state.latency_ms
+  recovery:
+    panel: Raw Messages
+    topics:
+      - /communication/recovery_status
+      - /mission/event
+      - /vision60/safety_state
+  collision:
+    panel: Raw Messages
+    topics:
+      - /safety/collision_monitor_state
+      - /vision60/mock_obstacle_phase
+
+offline_replays:
+  integrated_operator_bag: integrated_calibrated_replay
+  full_system_recovery_bag: full_system_calibrated_mock_replay
+  full_system_scene_bag: full_system_calibrated_scene/command_view/command_view_replay
+  oxford_sensor_bag: oxford_spires_regression/converted/oxford_spires_sequence
+  oxford_scene_bag: oxford_spires_regression/command_view/command_view_replay
+  synthetic_scene_bag: scene_model_mock/command_view/command_view_replay

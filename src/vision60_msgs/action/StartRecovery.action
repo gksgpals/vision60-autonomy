@@ -1,0 +1,11 @@
+string mission_id
+string target_waypoint_id
+geometry_msgs/PoseStamped target_pose
+---
+bool success
+uint8 final_state
+string message
+---
+uint8 current_state
+float32 remaining_distance_m
+string detail

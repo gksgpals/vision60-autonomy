@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "reviewed_at": "2026-08-02",
+  "sources": [
+    {
+      "name": "NVIDIA Isaac ROS Object Detection",
+      "url": "https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_object_detection",
+      "revision": "b0b9f25acd5df70e5d0b9d97eab0a120ddf22b2a",
+      "branch": "release-3.2",
+      "license": "Apache-2.0",
+      "decision": "deployment_candidate",
+      "reason": "Jetson Orin, JetPack 6.1/6.2 and ROS 2 Humble support"
+    },
+    {
+      "name": "NVIDIA PeopleNet AMR",
+      "url": "https://catalog.ngc.nvidia.com/orgs/nvidia/tao/models/peoplenet_amr/",
+      "revision": "deployable_v1.0",
+      "license": "NVIDIA NGC model terms",
+      "decision": "person_baseline_candidate",
+      "reason": "Robot-height person detector; person output remains an unverified victim candidate"
+    },
+    {
+      "name": "D-Fire Dataset",
+      "url": "https://github.com/gaia-solutions-on-demand/DFireDataset",
+      "revision": "4bf9c31b18fadcd44d5f0b6d66f82bc56fa5e328",
+      "branch": "master",
+      "license": "CC0-1.0 collection; upstream images may retain third-party rights",
+      "decision": "imported_fire_smoke_training_shard",
+      "reason": "21527-image Kaggle v1 distribution passed decode, COCO geometry and SHA-256 validation; perceptual leakage was found in the upstream split, so training uses a new scene-cluster-safe view",
+      "distribution_url": "https://www.kaggle.com/datasets/sayedgamal99/smoke-fire-detection-yolo/versions/1",
+      "distribution_revision": "kaggle-v1-2025-01-27-sha256-65d81b602991261b47ddc71281e99108362a30336a448e1f8d21352c825c6d83",
+      "validation_report": "datasets.nosync/dfire/dfire_full_validation_report.json",
+      "quality_actions": {
+        "clipped_out_of_frame_boxes": 379,
+        "dropped_zero_area_boxes": 18,
+        "source_labels_modified": false,
+        "upstream_cross_split_perceptual_candidates": 130787,
+        "safe_split_images": {
+          "train": 14965,
+          "val": 3300,
+          "test": 3262
+        }
+      }
+    },
+    {
+      "name": "AIDER",
+      "url": "https://zenodo.org/records/3888300",
+      "revision": "Zenodo record 3888300",
+      "license": "verify before download",
+      "decision": "context_only",
+      "reason": "Aerial scene classification does not match robot-height object localization"
+    },
+    {
+      "name": "imagededup",
+      "url": "https://github.com/idealo/imagededup",
+      "revision": "f0534a6ec10c02379c627696fbd486841068631c",
+      "license": "Apache-2.0",
+      "decision": "adopted_for_near_duplicate_audit",
+      "reason": "Mature tested PHash/DHash/CNN workflow; PHash is used only to create human-review candidates and never deletes source data",
+      "local_corrections": [
+        "lazy-load optional CNN dependencies",
+        "lazy-load plotting and wavelet-only dependencies"
+      ]
+    },
+    {
+      "name": "NVIDIA TAO Toolkit RT-DETR",
+      "url": "https://docs.nvidia.com/tao/tao-toolkit/latest/text/cv_finetuning/pytorch/object_detection/rt_detr.html",
+      "revision": "tao-toolkit:6.0.0-pyt and 6.0.0-deploy",
+      "license": "NVIDIA TAO container and model terms",
+      "decision": "adopted_training_export_pipeline",
+      "reason": "Official COCO input, ResNet-18 training, evaluation, ONNX export and TensorRT engine generation align with Jetson deployment"
+    },
+    {
+      "name": "CMU Robomechanics Quad-SDK",
+      "url": "https://github.com/robomechanics/quad-sdk",
+      "revision": "reviewed 2026-08-02",
+      "license": "MIT",
+      "decision": "not_adopted_for_vision60_transport",
+      "reason": "Credible research project, but its low-level locomotion driver and current Jazzy research stack would replace the vendor-certified KRM control boundary and does not match this Humble high-level velocity integration"
+    }
+  ]
+}

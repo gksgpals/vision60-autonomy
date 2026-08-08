@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<!-- Copyright 2026 Kookmin AI Lab, Apache-2.0 -->
+<sdf version="1.8">
+  <world name="vision60_disaster_test">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size><real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="ignition-gazebo-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system" name="gz::sim::systems::Sensors"><render_engine>ogre2</render_engine></plugin>
+    <plugin filename="ignition-gazebo-imu-system" name="gz::sim::systems::Imu"/>
+    <light type="directional" name="sun">
+      <pose>0 0 10 0 0 0</pose><diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular><direction>-0.5 0.1 -0.9</direction>
+    </light>
+    <model name="ground_plane">
+      <static>true</static><link name="ground">
+        <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>30 30</size></plane></geometry></collision>
+        <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>30 30</size></plane></geometry><material><diffuse>0.38 0.38 0.38 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="corridor_left"><static>true</static><pose>3.0 1.5 0.8 0 0 0</pose><link name="wall">
+      <collision name="collision"><geometry><box><size>7.0 0.20 1.6</size></box></geometry></collision>
+      <visual name="visual"><geometry><box><size>7.0 0.20 1.6</size></box></geometry><material><diffuse>0.30 0.30 0.32 1</diffuse></material></visual>
+    </link></model>
+    <model name="corridor_right"><static>true</static><pose>3.0 -1.5 0.8 0 0 0</pose><link name="wall">
+      <collision name="collision"><geometry><box><size>7.0 0.20 1.6</size></box></geometry></collision>
+      <visual name="visual"><geometry><box><size>7.0 0.20 1.6</size></box></geometry><material><diffuse>0.30 0.30 0.32 1</diffuse></material></visual>
+    </link></model>
+    <model name="victim_target">
+      <static>true</static><pose>2.6 -0.65 0 0 0 0</pose><link name="target">
+        <collision name="body_collision"><pose>0 0 0.65 0 0 0</pose><geometry><cylinder><radius>0.22</radius><length>1.10</length></cylinder></geometry></collision>
+        <visual name="body_visual"><pose>0 0 0.65 0 0 0</pose><geometry><cylinder><radius>0.22</radius><length>1.10</length></cylinder></geometry><material><ambient>1 0.02 1 1</ambient><diffuse>1 0.02 1 1</diffuse></material></visual>
+        <collision name="head_collision"><pose>0 0 1.40 0 0 0</pose><geometry><sphere><radius>0.23</radius></sphere></geometry></collision>
+        <visual name="head_visual"><pose>0 0 1.40 0 0 0</pose><geometry><sphere><radius>0.23</radius></sphere></geometry><material><ambient>1 0.02 1 1</ambient><diffuse>1 0.02 1 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="hazard_target">
+      <static>true</static><pose>4.0 0.65 0.45 0 0 0</pose><link name="target">
+        <collision name="collision"><geometry><cylinder><radius>0.28</radius><length>0.90</length></cylinder></geometry></collision>
+        <visual name="visual"><geometry><cylinder><radius>0.28</radius><length>0.90</length></cylinder></geometry><material><ambient>1 0.88 0.02 1</ambient><diffuse>1 0.88 0.02 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="end_wall"><static>true</static><pose>6.4 0 0.8 0 0 0</pose><link name="wall">
+      <collision name="collision"><geometry><box><size>0.20 3.2 1.6</size></box></geometry></collision>
+      <visual name="visual"><geometry><box><size>0.20 3.2 1.6</size></box></geometry><material><diffuse>0.30 0.30 0.32 1</diffuse></material></visual>
+    </link></model>
+    <include><uri>model://vision60</uri><name>vision60</name></include>
+  </world>
+</sdf>

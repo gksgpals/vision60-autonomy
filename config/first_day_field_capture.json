@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "captured_at": "",
+  "robot": {
+    "serial": "",
+    "application_version": "",
+    "robot_firmware": "",
+    "leg_firmware": "",
+    "health_export_file": ""
+  },
+  "jetson": {
+    "model": "AGX Orin 64GB (verify)",
+    "ubuntu": "",
+    "jetpack": "",
+    "cuda": "",
+    "tensorrt": "",
+    "ros_distro": "humble (verify)"
+  },
+  "ouster": {
+    "model": "OS1-32 (verify)",
+    "serial": "",
+    "firmware": "",
+    "sensor_ip": "",
+    "udp_destination": "",
+    "timestamp_mode": "",
+    "metadata_file": "",
+    "pcap_or_mcap_file": ""
+  },
+  "network": {
+    "vision60_wired_ip": "",
+    "microhard_profile": "",
+    "lte_profile": "",
+    "wifi_profile": "",
+    "credentials_included": false
+  },
+  "mechanical": {
+    "payload_mass_kg": null,
+    "total_mass_kg": null,
+    "center_of_mass_notes": "",
+    "lidar_to_base_transform_measured": false,
+    "camera_to_lidar_transform_measured": false
+  },
+  "safety": {
+    "physical_estop_tested": false,
+    "manual_takeover_tested": false,
+    "zero_velocity_stops_robot": false,
+    "test_supervisor": ""
+  }
+}

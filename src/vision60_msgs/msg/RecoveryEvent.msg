@@ -1,0 +1,17 @@
+uint8 RETURN_SUCCEEDED=1
+uint8 RETURN_FAILED=2
+uint8 SYNC_STARTED=3
+uint8 SYNC_SUCCEEDED=4
+uint8 SYNC_FAILED=5
+uint8 REENTRY_SUCCEEDED=6
+uint8 REENTRY_LINK_LOST=7
+uint8 CHANNEL_SWITCH_SUCCEEDED=8
+uint8 CHANNEL_SWITCH_FAILED=9
+uint8 CLASSIFICATION_RECORDED=10
+uint8 REENTRY_FAILED=11
+
+std_msgs/Header header
+string mission_id
+uint8 event
+string channel
+string detail

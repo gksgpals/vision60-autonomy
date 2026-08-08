@@ -1,0 +1,501 @@
+#!/usr/bin/env python3
+"""Record obstacle avoidance plus communication recovery in Gazebo."""
+
+import json
+import math
+from pathlib import Path
+import time
+
+import cv2
+import numpy as np
+import rclpy
+from action_msgs.srv import CancelGoal
+from nav2_msgs.action import FollowPath
+from nav_msgs.msg import Odometry, Path as RosPath
+from rclpy.action import ActionClient
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Image
+from std_msgs.msg import Float32, String, UInt32
+from vision60_msgs.msg import (
+    CommunicationState,
+    RecoveryStatus,
+    RobotSafetyState,
+    SyncStatus,
+)
+from vision60_msgs.srv import RequestSafeStop, SetWalkEnabled
+
+
+DYNAMIC_OBSTACLE = (2.0, 0.35, 0.55, 0.55)
+STATE_NAMES = {
+    RecoveryStatus.NORMAL: 'NORMAL',
+    RecoveryStatus.DEGRADED: 'DEGRADED',
+    RecoveryStatus.LINK_LOST: 'LINK_LOST',
+    RecoveryStatus.STOPPING: 'STOPPING',
+    RecoveryStatus.RETURNING: 'RETURNING',
+    RecoveryStatus.LINK_RECOVERED: 'LINK_RECOVERED',
+    RecoveryStatus.SYNCING: 'SYNCING',
+    RecoveryStatus.REENTRY_TEST: 'REENTRY_TEST',
+    RecoveryStatus.SAFE_STOP: 'SAFE_STOP',
+    RecoveryStatus.CHANNEL_SWITCH: 'CHANNEL_SWITCH',
+    RecoveryStatus.CLASSIFYING: 'CLASSIFYING',
+}
+
+
+def obstacle_clearance(x_value, y_value):
+    """Return robot-envelope clearance from the dynamic crate."""
+    center_x, center_y, size_x, size_y = DYNAMIC_OBSTACLE
+    outside_x = max(abs(x_value - center_x) - size_x / 2.0, 0.0)
+    outside_y = max(abs(y_value - center_y) - size_y / 2.0, 0.0)
+    return math.hypot(outside_x, outside_y) - 0.30
+
+
+class IntegratedRecoveryHarness(Node):
+    """Provide the safety boundary and save combined visual evidence."""
+
+    def __init__(self):
+        super().__init__('digital_twin_integrated_recovery_harness')
+        self.declare_parameter('output_dir', '/artifacts')
+        self.declare_parameter('timeout_s', 105.0)
+        self.output_dir = Path(self.get_parameter('output_dir').value)
+        self.timeout_s = float(self.get_parameter('timeout_s').value)
+        self.follow_client = ActionClient(self, FollowPath, '/follow_path')
+        self.cancel_client = self.create_client(
+            CancelGoal, '/follow_path/_action/cancel_goal'
+        )
+        self.safety_publisher = self.create_publisher(
+            RobotSafetyState, '/vision60/safety_state', 10
+        )
+        self.create_service(
+            RequestSafeStop,
+            '/vision60/request_safe_stop',
+            self.safe_stop_callback,
+        )
+        self.create_service(
+            SetWalkEnabled,
+            '/vision60/set_walk_enabled',
+            self.walk_enable_callback,
+        )
+        self.create_subscription(
+            Odometry, '/vision60/odom', self.odom_callback, 30
+        )
+        self.create_subscription(
+            Image, '/camera/image_raw', self.image_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            CommunicationState,
+            '/communication/state',
+            self.communication_callback,
+            20,
+        )
+        self.create_subscription(
+            RecoveryStatus,
+            '/communication/recovery_status',
+            self.status_callback,
+            20,
+        )
+        self.create_subscription(
+            SyncStatus, '/mission/sync_status', self.sync_callback, 10
+        )
+        self.create_subscription(
+            RosPath, '/mission/recovery_path', self.path_callback, 10
+        )
+        self.create_subscription(
+            String,
+            '/digital_twin/obstacle_phase',
+            self.phase_callback,
+            10,
+        )
+        self.create_subscription(
+            Float32,
+            '/digital_twin/dynamic_crate_y',
+            self.crate_callback,
+            10,
+        )
+        self.create_subscription(
+            UInt32,
+            '/digital_twin/avoidance_plan_count',
+            self.plan_callback,
+            10,
+        )
+        self.create_timer(0.05, self.tick)
+
+        self.started_at = time.monotonic()
+        self.odom = None
+        self.latest_image = None
+        self.walk_enabled = True
+        self.comm_state = CommunicationState.UNKNOWN
+        self.active_channel = 'mock_ethernet'
+        self.recovery_state = RecoveryStatus.NORMAL
+        self.state_sequence = []
+        self.phase = 'WAITING'
+        self.crate_y = 0.95
+        self.plan_count = 0
+        self.recovery_path_points = 0
+        self.sync_complete = False
+        self.seen_reentry = False
+        self.safe_stop_pose = None
+        self.positions = []
+        self.frames = []
+        self.final_ready_time = None
+        self.written = False
+
+    def odom_callback(self, message):
+        self.odom = message
+        position = message.pose.pose.position
+        self.positions.append((
+            float(position.x),
+            float(position.y),
+            int(self.recovery_state),
+            self.phase,
+        ))
+
+    def image_callback(self, message):
+        raw = np.frombuffer(message.data, dtype=np.uint8)
+        expected = int(message.height) * int(message.step)
+        if expected <= 0 or raw.size < expected:
+            return
+        if message.step < message.width * 3:
+            return
+        frame = raw[:expected].reshape(int(message.height), int(message.step))
+        frame = frame[:, :int(message.width) * 3].reshape(
+            int(message.height), int(message.width), 3
+        )
+        if message.encoding.lower() == 'rgb8':
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        self.latest_image = frame.copy()
+        if self.odom is None:
+            return
+        position = self.odom.pose.pose.position
+        self.frames.append((
+            frame.copy(),
+            float(position.x),
+            float(position.y),
+            int(self.recovery_state),
+            int(self.comm_state),
+            self.active_channel,
+            self.phase,
+            float(self.crate_y),
+        ))
+
+    def communication_callback(self, message):
+        self.comm_state = int(message.state)
+        self.active_channel = message.channel
+
+    def status_callback(self, message):
+        state = int(message.state)
+        self.recovery_state = state
+        if not self.state_sequence or self.state_sequence[-1] != state:
+            self.state_sequence.append(state)
+            self.get_logger().warning(
+                'Integrated recovery state: '
+                + STATE_NAMES.get(state, str(state))
+            )
+        if state == RecoveryStatus.REENTRY_TEST:
+            self.seen_reentry = True
+        if (
+            state == RecoveryStatus.SAFE_STOP
+            and self.final_ready_time is None
+        ):
+            self.final_ready_time = time.monotonic() + 1.0
+        if (
+            self.seen_reentry
+            and state == RecoveryStatus.NORMAL
+            and self.sync_complete
+            and self.final_ready_time is None
+        ):
+            self.final_ready_time = time.monotonic() + 1.0
+
+    def sync_callback(self, message):
+        if message.state == SyncStatus.COMPLETE:
+            self.sync_complete = True
+
+    def path_callback(self, message):
+        self.recovery_path_points = max(
+            self.recovery_path_points, len(message.poses)
+        )
+
+    def phase_callback(self, message):
+        self.phase = message.data
+
+    def crate_callback(self, message):
+        self.crate_y = float(message.data)
+
+    def plan_callback(self, message):
+        self.plan_count = max(self.plan_count, int(message.data))
+
+    def safe_stop_callback(self, request, response):
+        self.walk_enabled = False
+        if self.odom is not None:
+            position = self.odom.pose.pose.position
+            self.safe_stop_pose = (
+                float(position.x), float(position.y)
+            )
+        if self.cancel_client.service_is_ready():
+            cancel = CancelGoal.Request()
+            cancel.goal_info.goal_id.uuid = [0] * 16
+            self.cancel_client.call_async(cancel)
+        response.accepted = True
+        response.message = f'Nav2 stop accepted: {request.reason}'
+        self.get_logger().warning(response.message)
+        return response
+
+    def walk_enable_callback(self, request, response):
+        self.walk_enabled = bool(request.enabled)
+        response.accepted = True
+        response.message = 'Recovery-only walking permission updated'
+        return response
+
+    def tick(self):
+        self.publish_safety()
+        now = time.monotonic()
+        if (
+            self.final_ready_time is not None
+            and now >= self.final_ready_time
+            and not self.written
+        ):
+            self.written = True
+            self.write_artifacts()
+        elif now - self.started_at >= self.timeout_s and not self.written:
+            self.written = True
+            self.write_artifacts(force_fail=True)
+
+    def publish_safety(self):
+        message = RobotSafetyState()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = 'base_link'
+        message.walk_enabled = self.walk_enabled
+        message.localization_healthy = self.odom is not None
+        message.lidar_healthy = True
+        message.sdk_connected = True
+        message.motion_allowed = self.walk_enabled
+        message.stop_reason = (
+            '' if self.walk_enabled else 'communication link lost'
+        )
+        self.safety_publisher.publish(message)
+
+    def calculate_metrics(self, force_fail=False):
+        returning = [
+            (x_value, y_value)
+            for x_value, y_value, state, _ in self.positions
+            if state == RecoveryStatus.RETURNING
+        ]
+        if self.safe_stop_pose is None:
+            return_distance = 0.0
+        else:
+            stop_x, stop_y = self.safe_stop_pose
+            return_distance = max(
+                (
+                    math.hypot(x_value - stop_x, y_value - stop_y)
+                    for x_value, y_value in returning
+                ),
+                default=0.0,
+            )
+        clearances = [
+            obstacle_clearance(x_value, y_value)
+            for x_value, y_value, _, phase in self.positions
+            if phase in ('MAP_UPDATE', 'REPLANNING')
+        ]
+        minimum_clearance = min(clearances, default=0.0)
+        required = {
+            RecoveryStatus.STOPPING,
+            RecoveryStatus.RETURNING,
+            RecoveryStatus.CHANNEL_SWITCH,
+            RecoveryStatus.SYNCING,
+            RecoveryStatus.REENTRY_TEST,
+        }
+        passed = bool(
+            not force_fail
+            and self.plan_count >= 2
+            and self.phase == 'REPLANNING'
+            and required <= set(self.state_sequence)
+            and self.recovery_path_points >= 2
+            and return_distance >= 0.25
+            and minimum_clearance >= 0.03
+            and self.sync_complete
+            and self.active_channel == 'mock_backup_wifi'
+            and self.recovery_state == RecoveryStatus.NORMAL
+            and len(self.frames) >= 50
+        )
+        final_x = self.positions[-1][0] if self.positions else 0.0
+        final_y = self.positions[-1][1] if self.positions else 0.0
+        return {
+            'passed': passed,
+            'avoidance_plan_count': self.plan_count,
+            'dynamic_obstacle_phase': self.phase,
+            'minimum_obstacle_clearance_m': round(minimum_clearance, 4),
+            'state_sequence': [
+                STATE_NAMES.get(value, str(value))
+                for value in self.state_sequence
+            ],
+            'recovery_path_points': self.recovery_path_points,
+            'return_distance_m': round(return_distance, 4),
+            'sync_complete': self.sync_complete,
+            'final_channel': self.active_channel,
+            'final_x_m': round(final_x, 4),
+            'final_y_m': round(final_y, 4),
+            'video_frames': len(self.frames),
+        }
+
+    def write_artifacts(self, force_fail=False):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        metrics = self.calculate_metrics(force_fail)
+        (self.output_dir / 'integrated_recovery_report.json').write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2),
+            encoding='utf-8',
+        )
+        self.render_video(metrics)
+        marker = 'PASS' if metrics['passed'] else 'FAIL'
+        (self.output_dir / marker).write_text(
+            'integrated obstacle and communication recovery\n',
+            encoding='utf-8',
+        )
+        self.get_logger().warning(
+            'DIGITAL_TWIN_INTEGRATED_RECOVERY=' + marker
+            + f" return={metrics['return_distance_m']:.3f}m"
+            + ' clearance='
+            + f"{metrics['minimum_obstacle_clearance_m']:.3f}m"
+        )
+
+    def render_video(self, metrics):
+        output = self.output_dir / 'digital_twin_integrated_recovery.mp4'
+        writer = cv2.VideoWriter(
+            str(output), cv2.VideoWriter_fourcc(*'mp4v'),
+            10.0, (960, 540)
+        )
+        if not writer.isOpened():
+            raise RuntimeError('Could not create integrated recovery MP4')
+        colors = {
+            RecoveryStatus.NORMAL: (255, 205, 55),
+            RecoveryStatus.DEGRADED: (60, 210, 255),
+            RecoveryStatus.STOPPING: (65, 95, 245),
+            RecoveryStatus.RETURNING: (55, 160, 255),
+            RecoveryStatus.CHANNEL_SWITCH: (210, 150, 80),
+            RecoveryStatus.LINK_RECOVERED: (80, 220, 120),
+            RecoveryStatus.SYNCING: (200, 180, 80),
+            RecoveryStatus.REENTRY_TEST: (220, 100, 220),
+        }
+        track = []
+        last_canvas = None
+        for sample in self.frames:
+            camera, x_value, y_value, state, comm, channel, phase, crate_y = sample
+            track.append((x_value, y_value, state))
+            canvas = np.full((540, 960, 3), (22, 26, 31), dtype=np.uint8)
+            camera_panel = cv2.resize(
+                camera, (600, 450), interpolation=cv2.INTER_NEAREST
+            )
+            canvas[62:512, 20:620] = camera_panel
+            cv2.putText(
+                canvas, 'OBSTACLE + COMM RECOVERY DIGITAL TWIN',
+                (20, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.61,
+                (235, 240, 244), 2, cv2.LINE_AA,
+            )
+            state_name = STATE_NAMES.get(state, str(state))
+            cv2.putText(
+                canvas, state_name, (650, 39),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.56,
+                colors.get(state, (225, 232, 237)), 2, cv2.LINE_AA,
+            )
+            left, top, width, height = 650, 62, 290, 450
+            cv2.rectangle(
+                canvas, (left, top), (left + width, top + height),
+                (52, 60, 68), -1
+            )
+            scale = 62.0
+            origin = (left + 24, top + height // 2)
+
+            def pixel(world_x, world_y):
+                return (
+                    int(origin[0] + world_x * scale),
+                    int(origin[1] - world_y * scale),
+                )
+
+            for wall_y in (-1.35, 1.35):
+                cv2.line(
+                    canvas, pixel(0.0, wall_y), pixel(4.2, wall_y),
+                    (112, 101, 91), 12
+                )
+            rectangle = (
+                pixel(2.0, crate_y),
+                (int(0.55 * scale), int(0.55 * scale)),
+                0.0,
+            )
+            corners = cv2.boxPoints(rectangle).astype(np.int32)
+            cv2.fillConvexPoly(canvas, corners, (60, 70, 225))
+            for index in range(1, len(track)):
+                previous = track[index - 1]
+                current = track[index]
+                cv2.line(
+                    canvas,
+                    pixel(previous[0], previous[1]),
+                    pixel(current[0], current[1]),
+                    colors.get(current[2], (225, 232, 237)),
+                    3, cv2.LINE_AA,
+                )
+            cv2.circle(
+                canvas, pixel(track[0][0], track[0][1]),
+                7, (70, 210, 110), -1
+            )
+            cv2.circle(
+                canvas, pixel(x_value, y_value),
+                8, (65, 95, 245), -1
+            )
+            link_text = (
+                'LINK LOST'
+                if comm == CommunicationState.LOST
+                else 'LINK CONNECTED'
+            )
+            cv2.putText(
+                canvas, link_text, (left + 15, top + 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.46,
+                (65, 95, 245)
+                if comm == CommunicationState.LOST
+                else (80, 220, 120),
+                1, cv2.LINE_AA,
+            )
+            cv2.putText(
+                canvas, f'{phase} / PLAN {self.plan_count}',
+                (left + 15, top + 52), cv2.FONT_HERSHEY_SIMPLEX,
+                0.39, (80, 200, 255), 1, cv2.LINE_AA,
+            )
+            cv2.putText(
+                canvas, f'x={x_value:.2f}  y={y_value:.2f}',
+                (left + 15, top + 390), cv2.FONT_HERSHEY_SIMPLEX,
+                0.46, (225, 232, 237), 1, cv2.LINE_AA,
+            )
+            cv2.putText(
+                canvas, channel[:24], (left + 15, top + 420),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.40,
+                (160, 175, 185), 1, cv2.LINE_AA,
+            )
+            writer.write(canvas)
+            last_canvas = canvas
+        writer.release()
+        if last_canvas is not None:
+            marker = 'PASS' if metrics['passed'] else 'FAIL'
+            cv2.putText(
+                last_canvas, marker, (850, 39),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65,
+                (80, 220, 120)
+                if metrics['passed'] else (65, 95, 245),
+                2, cv2.LINE_AA,
+            )
+            cv2.imwrite(
+                str(self.output_dir / 'integrated_recovery_result.png'),
+                last_canvas,
+            )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = IntegratedRecoveryHarness()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

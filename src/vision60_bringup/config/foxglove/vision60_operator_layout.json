@@ -1,0 +1,236 @@
+{
+  "configById": {
+    "3D!3mk5djy": {
+      "topics": {
+        "/mission/recorded_path": {
+          "visible": true
+        },
+        "/ouster/points": {
+          "visible": true,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/mission/recovery_path": {
+          "visible": true
+        },
+        "/mission/scene_cloud": {
+          "visible": true,
+          "colorField": "rgb",
+          "colorMode": "rgb",
+          "colorMap": "turbo"
+        },
+        "/mission/scene_markers": {
+          "visible": true
+        },
+        "/mission/scene_mesh": {
+          "visible": true
+        },
+        "/mission/voxel_markers": {
+          "visible": true
+        }
+      },
+      "layers": {
+        "efe05ad7-e393-40ff-9928-6a2b100538f9": {
+          "layerId": "foxglove.Grid",
+          "instanceId": "efe05ad7-e393-40ff-9928-6a2b100538f9"
+        }
+      },
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60.00000000000001,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          -0.003671391931022963,
+          -0.0021196791196767283,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 59.99999999999999,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-none",
+      "scene": {},
+      "transforms": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "imageMode": {},
+      "foxglovePanelTitle": "3D Route & LiDAR"
+    },
+    "Plot!3cto6xz": {
+      "paths": [
+        {
+          "value": "/communication/state.signal_strength_dbm",
+          "enabled": true,
+          "color": "#4e98e2",
+          "id": "6b351f19-dfe3-4f24-a91e-400096dd34af",
+          "label": "RSSI (dBm)"
+        },
+        {
+          "value": "/communication/state.snr_db",
+          "enabled": true,
+          "color": "#f5774d",
+          "id": "66f51fe0-cfda-40aa-bd7c-f5bfaf2fae36",
+          "label": "SNR (dB)"
+        },
+        {
+          "value": "/communication/state.packet_loss_ratio",
+          "enabled": true,
+          "color": "#f7df71",
+          "id": "dc2f6e1d-33b3-435f-88e9-4214b6e65fb8",
+          "label": "Packet loss"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/communication/state.latency_ms",
+          "enabled": true,
+          "color": "#5cd6a9",
+          "id": "bae26829-9469-465c-b822-ad6c2dc6c3f0",
+          "label": "Latency (ms)"
+        }
+      ],
+      "showLegend": false,
+      "foxglovePanelTitle": "Communication Quality"
+    },
+    "Plot!convoe": {
+      "paths": [
+        {
+          "value": "/cmd_vel_safe.linear.x",
+          "enabled": true,
+          "color": "#5cd6a9",
+          "id": "0b9e21a7-ae79-4e21-8462-dcbbb619adb8",
+          "label": "Safe velocity"
+        },
+        {
+          "value": "/vision60/safety_state.motion_allowed",
+          "enabled": true,
+          "color": "#61cbff",
+          "id": "a6053f54-356a-4e8f-8da5-93444c8a8817",
+          "label": "Motion allowed"
+        },
+        {
+          "value": "/vision60/safety_state.command_timed_out",
+          "enabled": true,
+          "color": "#a395e2",
+          "id": "f16b4696-9708-4042-a5dc-f0296ac32ea6",
+          "label": "Command timeout"
+        }
+      ],
+      "showLegend": false,
+      "foxglovePanelTitle": "Safety & Motion"
+    },
+    "RawMessages!49qauzg": {
+      "topicPath": "/vision60/mock_obstacle_phase",
+      "defaultExpanded": false
+    },
+    "Image!same_source_camera": {
+      "cameraTopic": "/camera/image_raw",
+      "enabledMarkerTopics": [],
+      "synchronize": false,
+      "foxglovePanelTitle": "Forward Camera"
+    },
+    "StateTransitions!3bj8dqd": {
+      "foxglovePanelTitle": "Recovery State Timeline",
+      "paths": [
+        {
+          "value": "/communication/recovery_status.state",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "Recovery state"
+        },
+        {
+          "value": "/communication/state.state",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "Link state"
+        },
+        {
+          "value": "/mission/sync_status.state",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "Sync state"
+        }
+      ],
+      "isSynced": true,
+      "xAxisDisplayMethod": "relative"
+    },
+    "Tab!6qw2w2": {
+      "activeTabIdx": 0,
+      "tabs": [
+        {
+          "title": "Overview",
+          "layout": {
+            "direction": "column",
+            "first": {
+              "direction": "row",
+              "first": "3D!3mk5djy",
+              "second": {
+                "direction": "column",
+                "first": "Plot!3cto6xz",
+                "second": "Plot!convoe",
+                "splitPercentage": 50
+              },
+              "splitPercentage": 60
+            },
+            "second": {
+              "direction": "row",
+              "first": "Image!same_source_camera",
+              "second": "RawMessages!49qauzg",
+              "splitPercentage": 70
+            },
+            "splitPercentage": 80
+          }
+        }
+      ]
+    },
+    "RawMessages!3g9tixr": {
+      "defaultExpanded": false,
+      "topicPath": "/mission/event"
+    }
+  },
+  "layout": {
+    "direction": "row",
+    "first": "RawMessages!3g9tixr",
+    "second": {
+      "direction": "row",
+      "first": "StateTransitions!3bj8dqd",
+      "second": "Tab!6qw2w2",
+      "splitPercentage": 65.32270916334662
+    },
+    "splitPercentage": 49.105976095617535
+  },
+  "globalVariables": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "userNodes": {}
+}

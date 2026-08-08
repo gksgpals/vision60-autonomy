@@ -1,0 +1,8 @@
+mission_perception:
+  ros__parameters:
+    detector_backend: external_vision_msgs
+    external_detection_topic: /detections_output
+    external_class_map_json: '{"0":"fire_candidate","1":"smoke_candidate"}'
+    minimum_confidence: 0.35
+    maximum_detection_age_s: 0.25
+    mission_id: vision60_field_mission

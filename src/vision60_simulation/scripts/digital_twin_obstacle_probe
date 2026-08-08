@@ -1,0 +1,542 @@
+#!/usr/bin/env python3
+"""Command a blocked path and save visible Nav2 avoidance evidence."""
+
+import json
+import math
+from pathlib import Path
+import time
+
+from action_msgs.msg import GoalStatus
+import cv2
+import numpy as np
+import rclpy
+from geometry_msgs.msg import PoseStamped, Twist
+from nav2_msgs.action import ComputePathToPose, FollowPath
+from nav_msgs.msg import OccupancyGrid, Odometry
+from rclpy.action import ActionClient
+from rclpy.node import Node
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
+from sensor_msgs.msg import Image, PointCloud2
+from std_msgs.msg import Float32, String, UInt32
+
+
+OBSTACLES = (
+    (2.0, 0.65, 0.70, 0.45, 0.35),
+    (3.3, -0.55, 0.55, 0.50, -0.20),
+)
+DYNAMIC_STOP_Y = 0.35
+DYNAMIC_OBSTACLE = (2.00, DYNAMIC_STOP_Y, 0.55, 0.55, 0.0)
+
+
+def point_to_rotated_box(x_value, y_value, obstacle):
+    """Return center-point distance to the edge of a rotated box."""
+    center_x, center_y, size_x, size_y, yaw = obstacle
+    delta_x = x_value - center_x
+    delta_y = y_value - center_y
+    cosine = math.cos(yaw)
+    sine = math.sin(yaw)
+    local_x = cosine * delta_x + sine * delta_y
+    local_y = -sine * delta_x + cosine * delta_y
+    outside_x = max(abs(local_x) - size_x / 2.0, 0.0)
+    outside_y = max(abs(local_y) - size_y / 2.0, 0.0)
+    return math.hypot(outside_x, outside_y)
+
+
+class ObstacleAvoidanceProbe(Node):
+    """Send a straight global path and measure Nav2's local detour."""
+
+    def __init__(self):
+        super().__init__('digital_twin_obstacle_probe')
+        self.declare_parameter('output_dir', '/artifacts')
+        self.declare_parameter('dynamic_mode', False)
+        self.declare_parameter('target_distance_m', 4.10)
+        self.output_dir = Path(self.get_parameter('output_dir').value)
+        self.dynamic_mode = bool(
+            self.get_parameter('dynamic_mode').value
+        )
+        self.target_distance_m = float(
+            self.get_parameter('target_distance_m').value
+        )
+        self.plan_client = ActionClient(
+            self, ComputePathToPose, '/compute_path_to_pose'
+        )
+        self.follow_client = ActionClient(self, FollowPath, '/follow_path')
+        map_qos = QoSProfile(depth=1)
+        map_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        map_qos.reliability = ReliabilityPolicy.RELIABLE
+        self.map_publisher = self.create_publisher(
+            OccupancyGrid, '/map', map_qos
+        )
+        self.crate_publisher = self.create_publisher(
+            Twist, '/dynamic_crate/cmd_vel_world', 10
+        )
+        self.phase_publisher = self.create_publisher(
+            String, '/digital_twin/obstacle_phase', 10
+        )
+        self.crate_y_publisher = self.create_publisher(
+            Float32, '/digital_twin/dynamic_crate_y', 10
+        )
+        self.plan_count_publisher = self.create_publisher(
+            UInt32, '/digital_twin/avoidance_plan_count', 10
+        )
+        self.create_subscription(
+            Odometry, '/vision60/odom', self.odom_callback, 30
+        )
+        self.create_subscription(
+            Image, '/camera/image_raw', self.image_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_subscription(
+            PointCloud2, '/ouster/points', self.cloud_callback,
+            qos_profile_sensor_data,
+        )
+        self.odom = None
+        self.latest_image = None
+        self.cloud_points = 0
+        self.sent = False
+        self.planned_path = []
+        self.plan_count = 0
+        self.target_x = None
+        self.ready_since = None
+        self.goal_accepted = False
+        self.result_status = None
+        self.result_ready_time = None
+        self.follow_handle = None
+        self.ignore_next_follow_result = False
+        self.dynamic_phase = 'WAITING'
+        self.dynamic_y = 0.95
+        self.dynamic_started_at = None
+        self.dynamic_map_active = False
+        self.replan_due = None
+        self.positions = []
+        self.frames = []
+        self.written = False
+        self.create_timer(0.2, self.tick)
+
+    def odom_callback(self, message):
+        self.odom = message
+        if self.sent:
+            self.positions.append((
+                float(message.pose.pose.position.x),
+                float(message.pose.pose.position.y),
+                float(self.dynamic_y),
+            ))
+
+    def image_callback(self, message):
+        raw = np.frombuffer(message.data, dtype=np.uint8)
+        expected = int(message.height) * int(message.step)
+        if expected <= 0 or raw.size < expected or message.step < message.width * 3:
+            return
+        frame = raw[:expected].reshape(int(message.height), int(message.step))
+        frame = frame[:, :int(message.width) * 3].reshape(
+            int(message.height), int(message.width), 3
+        )
+        if message.encoding.lower() == 'rgb8':
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        self.latest_image = frame.copy()
+        if self.sent and self.odom is not None:
+            position = self.odom.pose.pose.position
+            self.frames.append((
+                frame.copy(), float(position.x), float(position.y),
+                float(self.dynamic_y), self.dynamic_phase,
+            ))
+
+    def cloud_callback(self, message):
+        self.cloud_points = int(message.width) * int(message.height)
+
+    def tick(self):
+        self.publish_test_state()
+        if not self.sent or self.dynamic_map_active:
+            self.publish_occupancy_map()
+        if not self.sent:
+            ready = (
+                self.odom is not None
+                and self.latest_image is not None
+                and self.cloud_points >= 1000
+                and self.plan_client.wait_for_server(timeout_sec=0.0)
+                and self.follow_client.wait_for_server(timeout_sec=0.0)
+            )
+            if ready:
+                if self.ready_since is None:
+                    self.ready_since = time.monotonic()
+                elif time.monotonic() - self.ready_since >= 2.0:
+                    self.request_plan()
+            return
+        if self.dynamic_mode:
+            self.update_dynamic_obstacle()
+        if self.replan_due is not None and time.monotonic() >= self.replan_due:
+            self.replan_due = None
+            self.request_plan()
+        if (
+            self.result_ready_time is not None
+            and time.monotonic() >= self.result_ready_time
+            and not self.written
+        ):
+            self.written = True
+            self.write_artifacts()
+
+    def publish_test_state(self):
+        phase = String()
+        phase.data = self.dynamic_phase
+        self.phase_publisher.publish(phase)
+        crate_y = Float32()
+        crate_y.data = float(self.dynamic_y)
+        self.crate_y_publisher.publish(crate_y)
+        count = UInt32()
+        count.data = int(self.plan_count)
+        self.plan_count_publisher.publish(count)
+
+    def update_dynamic_obstacle(self):
+        if self.odom is None:
+            return
+        robot_x = float(self.odom.pose.pose.position.x)
+        if (
+            self.dynamic_phase == 'WAITING'
+            and self.goal_accepted
+            and robot_x >= 0.45
+        ):
+            self.dynamic_phase = 'CROSSING'
+            self.dynamic_started_at = time.monotonic()
+            self.ignore_next_follow_result = True
+            if self.follow_handle is not None:
+                self.follow_handle.cancel_goal_async()
+                self.follow_handle = None
+            self.get_logger().warning(
+                'Dynamic crate entered; stopping before map update'
+            )
+        if self.dynamic_phase == 'CROSSING':
+            elapsed = time.monotonic() - self.dynamic_started_at
+            if elapsed < 2.4:
+                self.dynamic_y = max(
+                    DYNAMIC_STOP_Y, 0.95 - 0.25 * elapsed
+                )
+                command = Twist()
+                command.linear.y = -0.25
+                self.crate_publisher.publish(command)
+                return
+            self.crate_publisher.publish(Twist())
+            self.dynamic_y = DYNAMIC_STOP_Y
+            self.dynamic_phase = 'MAP_UPDATE'
+            self.dynamic_map_active = True
+            self.publish_occupancy_map()
+            self.replan_due = time.monotonic() + 1.0
+            self.get_logger().warning(
+                'Dynamic crate mapped; stopping and replanning'
+            )
+        elif self.dynamic_phase == 'MAP_UPDATE' and self.replan_due is None:
+            self.dynamic_phase = 'REPLANNING'
+
+    def publish_occupancy_map(self):
+        """Publish the accumulated SLAM-equivalent map of the test course."""
+        resolution = 0.05
+        origin_x = -1.0
+        origin_y = -2.5
+        width = 160
+        height = 100
+        data = [0] * (width * height)
+        for row in range(height):
+            y_value = origin_y + (row + 0.5) * resolution
+            for column in range(width):
+                x_value = origin_x + (column + 0.5) * resolution
+                occupied = (
+                    1.0 <= x_value <= 5.0
+                    and (
+                        abs(y_value - 1.35) <= 0.125
+                        or abs(y_value + 1.35) <= 0.125
+                    )
+                )
+                if not occupied:
+                    obstacles = [] if self.dynamic_mode else list(OBSTACLES)
+                    if self.dynamic_map_active:
+                        obstacles.append(DYNAMIC_OBSTACLE)
+                    for obstacle in obstacles:
+                        center_x, center_y, size_x, size_y, yaw = obstacle
+                        delta_x = x_value - center_x
+                        delta_y = y_value - center_y
+                        cosine = math.cos(yaw)
+                        sine = math.sin(yaw)
+                        local_x = cosine * delta_x + sine * delta_y
+                        local_y = -sine * delta_x + cosine * delta_y
+                        if (
+                            abs(local_x) <= size_x / 2.0
+                            and abs(local_y) <= size_y / 2.0
+                        ):
+                            occupied = True
+                            break
+                if occupied:
+                    data[row * width + column] = 100
+        message = OccupancyGrid()
+        message.header.stamp = self.get_clock().now().to_msg()
+        message.header.frame_id = 'odom'
+        message.info.map_load_time = message.header.stamp
+        message.info.resolution = resolution
+        message.info.width = width
+        message.info.height = height
+        message.info.origin.position.x = origin_x
+        message.info.origin.position.y = origin_y
+        message.info.origin.orientation.w = 1.0
+        message.data = data
+        self.map_publisher.publish(message)
+
+    def request_plan(self):
+        self.sent = True
+        start_x = float(self.odom.pose.pose.position.x)
+        if self.target_x is None:
+            self.target_x = start_x + self.target_distance_m
+        self.plan_count += 1
+        goal = ComputePathToPose.Goal()
+        goal.goal = PoseStamped()
+        goal.goal.header.frame_id = 'odom'
+        goal.goal.header.stamp = self.get_clock().now().to_msg()
+        goal.goal.pose.position.x = self.target_x
+        goal.goal.pose.position.y = 0.0
+        goal.goal.pose.orientation.w = 1.0
+        goal.planner_id = 'GridBased'
+        goal.use_start = False
+        future = self.plan_client.send_goal_async(goal)
+        future.add_done_callback(self.plan_response)
+        self.get_logger().warning(
+            f'Requested avoidance plan #{self.plan_count}'
+        )
+
+    def plan_response(self, future):
+        handle = future.result()
+        if not handle.accepted:
+            self.result_status = GoalStatus.STATUS_ABORTED
+            self.result_ready_time = time.monotonic() + 0.5
+            return
+        handle.get_result_async().add_done_callback(self.plan_result)
+
+    def plan_result(self, future):
+        wrapped = future.result()
+        if wrapped.status != GoalStatus.STATUS_SUCCEEDED:
+            self.result_status = int(wrapped.status)
+            self.result_ready_time = time.monotonic() + 0.5
+            return
+        path = wrapped.result.path
+        self.planned_path = [
+            (float(pose.pose.position.x), float(pose.pose.position.y))
+            for pose in path.poses
+        ]
+        goal = FollowPath.Goal()
+        goal.path = path
+        goal.controller_id = 'FollowPath'
+        goal.goal_checker_id = 'goal_checker'
+        future = self.follow_client.send_goal_async(goal)
+        future.add_done_callback(self.goal_response)
+        self.get_logger().warning(
+            f'Following planned avoidance path with {len(path.poses)} poses'
+        )
+
+    def goal_response(self, future):
+        handle = future.result()
+        self.goal_accepted = bool(handle.accepted)
+        if not handle.accepted:
+            self.result_status = GoalStatus.STATUS_ABORTED
+            self.result_ready_time = time.monotonic() + 0.5
+            return
+        self.follow_handle = handle
+        handle.get_result_async().add_done_callback(self.goal_result)
+
+    def goal_result(self, future):
+        if self.ignore_next_follow_result:
+            self.ignore_next_follow_result = False
+            return
+        self.result_status = int(future.result().status)
+        self.result_ready_time = time.monotonic() + 1.0
+
+    def calculate_metrics(self):
+        minimum_center_distance = min(
+            (
+                point_to_rotated_box(x_value, y_value, obstacle)
+                for x_value, y_value, _ in self.positions
+                for obstacle in (
+                    ((DYNAMIC_OBSTACLE,) if self.dynamic_mode else OBSTACLES)
+                )
+            ),
+            default=0.0,
+        )
+        robot_half_width = 0.30
+        clearance = minimum_center_distance - robot_half_width
+        wall_clearance = min(
+            (1.225 - abs(y_value) - robot_half_width
+             for _, y_value, _ in self.positions),
+            default=0.0,
+        )
+        final_x = self.positions[-1][0] if self.positions else 0.0
+        max_lateral = max(
+            (abs(value[1]) for value in self.positions), default=0.0
+        )
+        passed = bool(
+            self.goal_accepted
+            and self.result_status == GoalStatus.STATUS_SUCCEEDED
+            and final_x >= 3.85
+            and max_lateral >= 0.12
+            and clearance >= 0.03
+            and wall_clearance >= 0.05
+            and self.cloud_points >= 1000
+            and len(self.frames) >= 50
+            and (not self.dynamic_mode or self.plan_count >= 2)
+        )
+        return {
+            'passed': passed,
+            'planner': (
+                'Nav2 NavFn accumulated map + DWB LiDAR local avoidance'
+            ),
+            'planned_path_points': len(self.planned_path),
+            'plan_count': self.plan_count,
+            'dynamic_obstacle_injected': self.dynamic_mode,
+            'goal_status': self.result_status,
+            'final_x_m': round(final_x, 4),
+            'max_lateral_detour_m': round(max_lateral, 4),
+            'minimum_obstacle_clearance_m': round(clearance, 4),
+            'minimum_wall_clearance_m': round(wall_clearance, 4),
+            'lidar_points': self.cloud_points,
+            'path_samples': len(self.positions),
+            'video_frames': len(self.frames),
+        }
+
+    def write_artifacts(self):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        metrics = self.calculate_metrics()
+        report_name = (
+            'dynamic_obstacle_report.json'
+            if self.dynamic_mode else 'obstacle_avoidance_report.json'
+        )
+        (self.output_dir / report_name).write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2), encoding='utf-8'
+        )
+        self.render_video(metrics)
+        (self.output_dir / ('PASS' if metrics['passed'] else 'FAIL')).write_text(
+            'digital twin obstacle avoidance\n', encoding='utf-8'
+        )
+        self.get_logger().warning(
+            'DIGITAL_TWIN_OBSTACLE_AVOIDANCE='
+            + ('PASS' if metrics['passed'] else 'FAIL')
+            + f" detour={metrics['max_lateral_detour_m']:.3f}m"
+            + f" clearance={metrics['minimum_obstacle_clearance_m']:.3f}m"
+        )
+
+    def render_video(self, metrics):
+        video_name = (
+            'digital_twin_dynamic_obstacle.mp4'
+            if self.dynamic_mode else 'digital_twin_obstacle_avoidance.mp4'
+        )
+        output = self.output_dir / video_name
+        writer = cv2.VideoWriter(
+            str(output), cv2.VideoWriter_fourcc(*'mp4v'), 10.0, (960, 540)
+        )
+        if not writer.isOpened():
+            raise RuntimeError('Could not create obstacle avoidance MP4')
+        track = []
+        last_canvas = None
+        for camera, x_value, y_value, dynamic_y, phase in self.frames:
+            track.append((x_value, y_value))
+            canvas = np.full((540, 960, 3), (22, 26, 31), dtype=np.uint8)
+            camera_panel = cv2.resize(camera, (600, 450), interpolation=cv2.INTER_NEAREST)
+            canvas[62:512, 20:620] = camera_panel
+            cv2.putText(
+                canvas,
+                ('NAV2 DYNAMIC OBSTACLE REPLANNING'
+                 if self.dynamic_mode else 'NAV2 LIDAR OBSTACLE AVOIDANCE'),
+                (20, 39),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.68, (235, 240, 244), 2,
+                cv2.LINE_AA,
+            )
+            left, top, width, height = 650, 62, 290, 450
+            cv2.rectangle(canvas, (left, top), (left + width, top + height), (52, 60, 68), -1)
+            scale = 62.0
+            origin = (left + 24, top + height // 2)
+
+            def pixel(world_x, world_y):
+                return (int(origin[0] + world_x * scale), int(origin[1] - world_y * scale))
+
+            cv2.line(canvas, pixel(0.0, 0.0), pixel(4.2, 0.0), (115, 125, 135), 2)
+            if len(self.planned_path) >= 2:
+                planned = np.array(
+                    [pixel(*value) for value in self.planned_path],
+                    dtype=np.int32,
+                )
+                cv2.polylines(
+                    canvas, [planned], False, (180, 150, 95), 2,
+                    cv2.LINE_AA,
+                )
+            for center_y in (-1.35, 1.35):
+                cv2.line(canvas, pixel(0.0, center_y), pixel(4.3, center_y), (112, 101, 91), 12)
+            for obstacle in (() if self.dynamic_mode else OBSTACLES):
+                center_x, center_y, size_x, size_y, yaw = obstacle
+                rectangle = ((pixel(center_x, center_y)), (int(size_x * scale), int(size_y * scale)), -math.degrees(yaw))
+                corners = cv2.boxPoints(rectangle).astype(np.int32)
+                cv2.fillConvexPoly(canvas, corners, (92, 72, 56))
+            if self.dynamic_mode:
+                dynamic = (2.00, dynamic_y, 0.55, 0.55, 0.0)
+                center_x, center_y, size_x, size_y, yaw = dynamic
+                rectangle = (
+                    pixel(center_x, center_y),
+                    (int(size_x * scale), int(size_y * scale)), 0.0,
+                )
+                corners = cv2.boxPoints(rectangle).astype(np.int32)
+                cv2.fillConvexPoly(canvas, corners, (60, 70, 225))
+            if len(track) >= 2:
+                points = np.array([pixel(*value) for value in track], dtype=np.int32)
+                cv2.polylines(canvas, [points], False, (55, 205, 255), 4, cv2.LINE_AA)
+            cv2.circle(canvas, pixel(track[0][0], track[0][1]), 7, (70, 210, 110), -1)
+            cv2.circle(canvas, pixel(x_value, y_value), 8, (65, 95, 245), -1)
+            instantaneous_clearance = min(
+                point_to_rotated_box(x_value, y_value, obstacle)
+                for obstacle in (
+                    (((2.00, dynamic_y, 0.55, 0.55, 0.0),)
+                     if self.dynamic_mode else OBSTACLES)
+                )
+            ) - 0.30
+            cv2.putText(canvas, 'LIVE LIDAR PATH', (left + 15, top + 28),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (225, 232, 237), 1, cv2.LINE_AA)
+            cv2.putText(canvas, f'x={x_value:.2f}  y={y_value:.2f}', (left + 15, top + 390),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, (225, 232, 237), 1, cv2.LINE_AA)
+            cv2.putText(canvas, f'clearance={instantaneous_clearance:.2f}m', (left + 15, top + 420),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (80, 220, 120) if instantaneous_clearance >= 0.03 else (65, 95, 245),
+                        1, cv2.LINE_AA)
+            if self.dynamic_mode:
+                cv2.putText(
+                    canvas, phase, (left + 15, top + 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (80, 200, 255),
+                    1, cv2.LINE_AA,
+                )
+            writer.write(canvas)
+            last_canvas = canvas
+        writer.release()
+        if last_canvas is not None:
+            cv2.putText(
+                last_canvas,
+                'PASS' if metrics['passed'] else 'FAIL',
+                (820, 39), cv2.FONT_HERSHEY_SIMPLEX, 0.72,
+                (80, 220, 120) if metrics['passed'] else (65, 95, 245),
+                2, cv2.LINE_AA,
+            )
+            cv2.imwrite(
+                str(self.output_dir / (
+                    'dynamic_obstacle_result.png'
+                    if self.dynamic_mode else 'obstacle_avoidance_result.png'
+                )),
+                last_canvas,
+            )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ObstacleAvoidanceProbe()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
