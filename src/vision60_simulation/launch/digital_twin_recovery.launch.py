@@ -1,6 +1,7 @@
 """Run the production communication-recovery chain in the Gazebo twin."""
 
 import os
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -12,6 +13,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     simulation_share = get_package_share_directory('vision60_simulation')
+    runtime_dir = tempfile.mkdtemp(prefix='vision60_recovery_')
     digital_twin_launch = os.path.join(
         simulation_share, 'launch', 'digital_twin.launch.py'
     )
@@ -53,7 +55,9 @@ def generate_launch_description():
             name='digital_twin_mission_logger',
             output='screen',
             parameters=[{
-                'database_path': '/tmp/vision60_digital_twin_mission.sqlite3',
+                'database_path': os.path.join(
+                    runtime_dir, 'mission.sqlite3'
+                ),
                 'transport': 'mock',
                 'record_all_data': True,
             }],

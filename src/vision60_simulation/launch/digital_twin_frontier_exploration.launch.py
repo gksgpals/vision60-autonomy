@@ -1,6 +1,7 @@
 """Run frontier exploration with communication-loss recovery in Gazebo."""
 
 import os
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -13,6 +14,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     """Build the complete exploration, safety, and recovery graph."""
     share = get_package_share_directory('vision60_simulation')
+    runtime_dir = tempfile.mkdtemp(prefix='vision60_frontier_')
     obstacle_launch = os.path.join(
         share, 'launch', 'digital_twin_obstacle_avoidance.launch.py'
     )
@@ -85,7 +87,9 @@ def generate_launch_description():
             package='mission_logger', executable='mission_logger',
             name='frontier_mission_logger', output='screen',
             parameters=[{
-                'database_path': '/tmp/vision60_frontier_mission.sqlite3',
+                'database_path': os.path.join(
+                    runtime_dir, 'mission.sqlite3'
+                ),
                 'transport': 'mock',
                 'record_all_data': True,
             }],

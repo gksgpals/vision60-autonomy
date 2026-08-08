@@ -1,6 +1,7 @@
 """Run dynamic avoidance and communication recovery in one Gazebo test."""
 
 import os
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -12,6 +13,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     share = get_package_share_directory('vision60_simulation')
+    runtime_dir = tempfile.mkdtemp(prefix='vision60_integrated_')
     obstacle_launch = os.path.join(
         share, 'launch', 'digital_twin_obstacle_avoidance.launch.py'
     )
@@ -27,7 +29,7 @@ def generate_launch_description():
                 'dynamic_mode': 'true',
                 'require_motion_permission': 'true',
                 'target_distance_m': '4.80',
-                'output_dir': '/tmp/integrated_obstacle_probe',
+                'output_dir': os.path.join(runtime_dir, 'obstacle_probe'),
             }.items(),
         ),
         Node(
@@ -54,7 +56,9 @@ def generate_launch_description():
             package='mission_logger', executable='mission_logger',
             name='integrated_mission_logger', output='screen',
             parameters=[{
-                'database_path': '/tmp/vision60_integrated_mission.sqlite3',
+                'database_path': os.path.join(
+                    runtime_dir, 'mission.sqlite3'
+                ),
                 'transport': 'mock',
                 'record_all_data': True,
             }],

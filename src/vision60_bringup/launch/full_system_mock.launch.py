@@ -15,6 +15,7 @@ The mock scenario node only supplies /communication/state here. The bridge is
 the single owner of /vision60/safety_state and /vision60/request_safe_stop.
 """
 import os
+import tempfile
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -27,6 +28,7 @@ ODOMETRY_REMAP = ('/slam/odom', '/state/odometry')
 
 def generate_launch_description():
     share = get_package_share_directory('vision60_bringup')
+    runtime_dir = tempfile.mkdtemp(prefix='vision60_full_system_mock_')
     nav2_params = os.path.join(share, 'config', 'nav2_controller.yaml')
     bridge_params = os.path.join(share, 'config', 'vision60_bridge.yaml')
     ekf_params = os.path.join(share, 'config', 'ekf_bridge_mock.yaml')
@@ -136,7 +138,9 @@ def generate_launch_description():
             name='mission_logger',
             output='screen',
             parameters=[{
-                'database_path': '/tmp/vision60_mock_mission.sqlite3',
+                'database_path': os.path.join(
+                    runtime_dir, 'mission.sqlite3'
+                ),
                 'transport': 'mock',
             }],
         ),
